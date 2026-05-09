@@ -107,7 +107,8 @@ Channels are restored in this specific order to prevent the firmware from resett
 2. Primary channel (role = 1) last
 
 ---
-
+## Disclamer
+I’m not a software developer by training. This tool was built with the help of an AI and a lot of work on my side to design, test, and refine it. If you’re a developer and would like to contribute, any help to keep this project alive and evolving is greatly appreciated.
 ## License
 
 [Creative Commons Attribution – NonCommercial – ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/)
@@ -117,6 +118,7 @@ Channels are restored in this specific order to prevent the firmware from resett
 ## Author
 
 **zifnab69** — ZIFNAB69_fr@yahoo.fr
+
 
 ---
 
@@ -260,6 +262,8 @@ Exemple : `meshtastic_JMC_5F7B_20260509_095500.json`
 
 **zifnab69** — ZIFNAB69_fr@yahoo.fr
 
+## Information
+Je ne suis absolument pas développeur de formation. Ce logiciel a été conçu avec l’aide d’une IA et beaucoup d’efforts de ma part pour le penser, le tester et l’améliorer. Si vous êtes développeur et que vous souhaitez contribuer, toute aide sera la bienvenue pour faire vivre et progresser ce projet.
 ---
 
 ## Changelog
