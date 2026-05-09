@@ -264,6 +264,7 @@ Exemple : `meshtastic_JMC_5F7B_20260509_095500.json`
 
 ## Information
 Je ne suis absolument pas développeur de formation. Ce logiciel a été conçu avec l’aide d’une IA et beaucoup d’efforts de ma part pour le penser, le tester et l’améliorer. Si vous êtes développeur et que vous souhaitez contribuer, toute aide sera la bienvenue pour faire vivre et progresser ce projet.
+
 ---
 
 ## Changelog
