@@ -2,7 +2,7 @@
 
 ---
 
-# Meshtastic Backup & Fleet Manager
+# Nodes Backup & Fleet Manager
 
 A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic node configurations** over USB on Windows.
 
@@ -148,7 +148,7 @@ I’m not a software developer by training. This tool was built with the help of
 
 # 🇫🇷 Version française
 
-# Meshtastic Config Manager
+# Nodes Config Manager
 
 Application Python/Tkinter pour **sauvegarder, restaurer et déployer les configurations de nœuds Meshtastic** via USB sous Windows.
 
