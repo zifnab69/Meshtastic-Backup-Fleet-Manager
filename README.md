@@ -23,6 +23,7 @@ A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic 
 - **Key fields editor** — edit region, modem preset, owner name and channel names directly in the UI without touching the JSON
 - **Integrity validation** — automatic pre-restore checks with warnings
 - **Standalone EXE** — compiled with PyInstaller, no Python installation required
+- **ENG and FR** — UI in English or French.
 
 ---
 
@@ -122,33 +123,10 @@ I’m not a software developer by training. This tool was built with the help of
 
 ---
 
-## Changelog
-
-### v1.2 (May 2026)
-- Help tab added to the UI
-- Export: device is read before the save dialog opens
-- Automatic filename with short_name + 4 hex MAC suffix
-- Multi-node export with per-node port selection, COM1 excluded
-- Multi-node import uses the file selected in the UI
-- COM1 automatically excluded from all port lists
-- Auto port detection on startup
-- Full PSK restore for all channels (bug fix)
-- Channel restore order: secondary first, primary last
-- module_settings restored (position_precision, is_muted)
-- Full security key restore (private_key included)
-- Fleet profile strips both public_key and private_key (admin_key kept)
-- hw_model converted from protobuf enum to readable name
-- short_name appended with last 4 hex of MAC address
-
-### v1.0
-- Initial release
-
----
----
 
 # 🇫🇷 Version française
 
-# Nodes Config Manager
+# Nodes Backup and Fleet Manager
 
 Application Python/Tkinter pour **sauvegarder, restaurer et déployer les configurations de nœuds Meshtastic** via USB sous Windows.
 
@@ -169,6 +147,7 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 - **Éditeur de champs clés** — modifier région, modem preset, nom owner et noms des canaux directement dans l'interface
 - **Validation d'intégrité** — vérifications automatiques avant chaque restauration
 - **EXE autonome** — compilé avec PyInstaller, aucune installation Python requise
+- **ENG ou FR** — Ui en anglais ou en français à la demande
 
 ---
 
@@ -267,27 +246,9 @@ Je ne suis absolument pas développeur de formation. Ce logiciel a été conçu 
 
 ---
 
-## Changelog
-
-### v1.2 (mai 2026)
-- Ajout de l'onglet Aide dans l'interface
-- Export : lecture de l'appareil avant la boîte de sauvegarde
-- Nommage automatique avec short_name + 4 hex MAC
-- Export multi-nœuds avec sélection de port par nœud, COM1 exclu
-- Import multi-nœuds : utilise le fichier sélectionné dans l'UI
-- COM1 exclu automatiquement de toutes les listes de ports
-- Détection automatique des ports au démarrage
-- Restauration complète des PSK canaux (bug corrigé)
-- Ordre restauration canaux : secondaires d'abord, primaire en dernier
-- module_settings restaurés (position_precision, is_muted)
-- Restauration complète des clés de sécurité (private_key incluse)
-- Profil flotte : suppression public_key ET private_key (admin_key conservée)
-
-### v1.0
-- Version initiale
 
 
-# Meshtastic-Configuration-Manager
+# Nodes Backup & Fleet Manager
 Outil Python/Tkinter pour sauvegarder, restaurer et déployer les configurations de nœuds Meshtastic via USB et sous windows. Export complet en JSON, génération de profils flotte (suppression des clés uniques à l'appareil), Conçu pour n’importe quel  nœuds .
 
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
