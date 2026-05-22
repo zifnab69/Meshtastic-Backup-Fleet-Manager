@@ -1,4 +1,4 @@
-# Contributing to Meshtastic Configuration Manager
+# Contributing to Nodes and backup fleet manager
 
 Thank you for your interest in improving this project.
 
