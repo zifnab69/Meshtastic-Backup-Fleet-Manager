@@ -29,7 +29,7 @@ A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic 
 
 ## Screenshots
 
-![alt](https://github.com/zifnab69/Meshtastic-Configuration-Manager/blob/main/CM_Firstpannel.jpg)
+![alt](https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/blob/6579b8c90f353b65689bed8e41368263e8d98b36/CM_Firstpannel.jpg)
 ---
 
 ## Requirements
@@ -45,7 +45,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python meshtastic_config_manager_v1.2_EN.py
+python NBFMV1.75.py
 ```
 
 ### Running the standalone EXE
@@ -91,10 +91,10 @@ No installation needed. Download the EXE from the [Releases](../../releases) pag
 ## File naming
 
 ```
-meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].json
+Meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].json
 ```
 
-Example: `meshtastic_JMC_5F7B_20260509_095500.json`
+Example: `Meshtastic_JMC_5F7B_20260509_095500.json`
 
 The short_name includes the last 4 hex characters of the node's MAC address for unique identification.
 
@@ -112,7 +112,7 @@ Channels are restored in this specific order to prevent the firmware from resett
 I’m not a software developer by training. This tool was built with the help of an AI and a lot of work on my side to design, test, and refine it. If you’re a developer and would like to contribute, any help to keep this project alive and evolving is greatly appreciated.
 ## License
 
-GPL3
+GPLv3
 
 ---
 
@@ -153,7 +153,7 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 
 ## Captures d'écran
 
-![alt](https://github.com/zifnab69/Meshtastic-Configuration-Manager/blob/main/CM_vueprincipale1.jpg)
+![alt](https://github.com/zifnab69/Nodes-backup-fleet-manager/blob/main/CM_vueprincipale1.jpg)
 
 
 ---
@@ -171,7 +171,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python meshtastic_config_manager_v1.1.py
+python python NBFMV1.75.py
 ```
 
 ### Depuis l'EXE autonome
@@ -232,7 +232,7 @@ Exemple : `meshtastic_JMC_5F7B_20260509_095500.json`
 ---
 
 ## Licence
-GPL3
+GPLv3
 
 ---
 
