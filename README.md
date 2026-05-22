@@ -112,7 +112,7 @@ Channels are restored in this specific order to prevent the firmware from resett
 I’m not a software developer by training. This tool was built with the help of an AI and a lot of work on my side to design, test, and refine it. If you’re a developer and would like to contribute, any help to keep this project alive and evolving is greatly appreciated.
 ## License
 
-[Creative Commons Attribution – NonCommercial – ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+GPL3
 
 ---
 
@@ -232,8 +232,7 @@ Exemple : `meshtastic_JMC_5F7B_20260509_095500.json`
 ---
 
 ## Licence
-
-[Creative Commons Attribution – Pas d'Utilisation Commerciale – Partage dans les Mêmes Conditions 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.fr)
+GPL3
 
 ---
 
