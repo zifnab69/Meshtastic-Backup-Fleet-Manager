@@ -29,7 +29,7 @@ A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic 
 
 ## Screenshots
 
-![alt](https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/blob/6579b8c90f353b65689bed8e41368263e8d98b36/CM_Firstpannel.jpg)
+![alt](https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/blob/a27df849a4daddf056448f14d2b23e034a597be1/Images/CM_Firstpannel%201.77.jpg)
 ---
 
 ## Requirements
@@ -153,7 +153,7 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 
 ## Captures d'écran
 
-![alt](https://github.com/zifnab69/Nodes-backup-fleet-manager/blob/3249d4e4cbbc04c3adf40bbe6d33a29a242ddb2f/CM_vueprincipale1.jpg)
+![alt](https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/blob/a5b74e2e3f281fce2b458d4eb60ab02c5f94e7fd/Images/CM_vueprincipale%201.7.7.jpg)
 
 
 ---
