@@ -153,7 +153,7 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 
 ## Captures d'écran
 
-![alt](https://github.com/zifnab69/Nodes-backup-fleet-manager/blob/main/CM_vueprincipale1.jpg)
+![alt](https://github.com/zifnab69/Nodes-backup-fleet-manager/blob/3249d4e4cbbc04c3adf40bbe6d33a29a242ddb2f/CM_vueprincipale1.jpg)
 
 
 ---
