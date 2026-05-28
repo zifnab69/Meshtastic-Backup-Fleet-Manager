@@ -254,14 +254,14 @@ ou place-le dans la structure ci-dessus selon son rôle.
 
 ### Priorité haute
 - [ ] **Persistance du dossier de travail** dans `NBFM_Config.json` (perdu à chaque lancement)
-- [ ] **Persistance du port COM** sélectionné dans `NBFM_Config.json`
+- [ ] **`NBFM_Config.json` créé quelle que soit la langue** : actuellement le fichier n'est créé que si l'utilisateur choisit le français. Il doit être créé dès le premier lancement (EN ou FR) pour pouvoir stocker la préférence de langue et, à terme, d'autres réglages. Le port COM **ne doit pas** être persisté (il change à chaque appareil branché).
 - [ ] **Documenter la commande PyInstaller** dans le README (commande exacte + options `--icon`, `--add-data`)
 
 ### Priorité moyenne
 - [ ] **Support YAML natif** : le glob inclut `*.yaml/*.yml` mais `import_full_config` ne gère que JSON
 - [ ] **Rapport CSV** : format CSV en plus du HTML (plus facile à filtrer dans Excel)
 - [ ] **Validation PSK** : avertir si la PSK saisie en Base64 n'a pas la bonne longueur (16 ou 32 octets)
-- [ ] **Détection firmware** : afficher la version firmware dans la liste des fichiers (champ `metadata`)
+- [ ] **Firmware dans la bulle de survol** : afficher la version firmware (champ `metadata`) dans le tooltip au survol de chaque ligne, au même titre que le nombre de nœuds connus (`known_nodes_count`) — ne pas ajouter de colonne supplémentaire dans le Treeview (le tableau ne doit pas s'élargir davantage).
 
 ### Priorité basse
 - [ ] **Icône application** pour l'EXE PyInstaller
