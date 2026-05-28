@@ -1,0 +1,567 @@
+{
+  "_export_date": "2026-05-10T14:34:58.771756",
+  "_app_version": "2.2",
+  "my_info": {
+    "my_node_num": 375826425,
+    "reboot_count": 0,
+    "min_app_version": 30200,
+    "device_id": "57c78e73ee051a9df9a76616f5a6e45c",
+    "pio_env": "t-echo-inkhud",
+    "firmware_edition": 0,
+    "nodedb_count": 6
+  },
+  "owner": {
+    "long_name": "GB a7f9",
+    "short_name": "GB_A7F9",
+    "hw_model": "T_ECHO"
+  },
+  "local_config": {
+    "device": {
+      "role": 0,
+      "serial_enabled": false,
+      "button_gpio": 0,
+      "buzzer_gpio": 0,
+      "rebroadcast_mode": 2,
+      "node_info_broadcast_secs": 7200,
+      "double_tap_as_button_press": false,
+      "is_managed": false,
+      "disable_triple_click": true,
+      "tzdef": "CET-1CEST,M3.5.0/2:00:00,M10.5.0/3:00:00",
+      "led_heartbeat_disabled": false,
+      "buzzer_mode": 0
+    },
+    "position": {
+      "position_broadcast_secs": 900,
+      "position_broadcast_smart_enabled": true,
+      "fixed_position": false,
+      "gps_enabled": false,
+      "gps_update_interval": 120,
+      "gps_attempt_time": 0,
+      "position_flags": 939,
+      "rx_gpio": 0,
+      "tx_gpio": 0,
+      "broadcast_smart_minimum_distance": 50,
+      "broadcast_smart_minimum_interval_secs": 30,
+      "gps_en_gpio": 0,
+      "gps_mode": 1
+    },
+    "power": {
+      "is_power_saving": false,
+      "on_battery_shutdown_after_secs": 0,
+      "adc_multiplier_override": 2.0,
+      "wait_bluetooth_secs": 60,
+      "sds_secs": 4294967295,
+      "ls_secs": 300,
+      "min_wake_secs": 10,
+      "device_battery_ina_address": 0,
+      "powermon_enables": 0
+    },
+    "network": {
+      "wifi_enabled": false,
+      "wifi_ssid": "",
+      "wifi_psk": "",
+      "ntp_server": "meshtastic.pool.ntp.org",
+      "eth_enabled": false,
+      "address_mode": 0,
+      "ipv4_config": {
+        "ip": 0,
+        "gateway": 0,
+        "subnet": 0,
+        "dns": 0
+      },
+      "rsyslog_server": "",
+      "enabled_protocols": 0,
+      "ipv6_enabled": false
+    },
+    "display": {
+      "screen_on_secs": 20,
+      "gps_format": 0,
+      "auto_screen_carousel_secs": 0,
+      "compass_north_top": false,
+      "flip_screen": false,
+      "units": 0,
+      "oled": 0,
+      "displaymode": 0,
+      "heading_bold": false,
+      "wake_on_tap_or_motion": false,
+      "compass_orientation": 0,
+      "use_12h_clock": false,
+      "use_long_node_name": false,
+      "enable_message_bubbles": false
+    },
+    "lora": {
+      "use_preset": true,
+      "modem_preset": 3,
+      "bandwidth": 250,
+      "spread_factor": 11,
+      "coding_rate": 5,
+      "frequency_offset": 0.0,
+      "region": 3,
+      "hop_limit": 3,
+      "tx_enabled": true,
+      "tx_power": 27,
+      "channel_num": 0,
+      "override_duty_cycle": true,
+      "sx126x_rx_boosted_gain": true,
+      "override_frequency": 869.5,
+      "pa_fan_disabled": false,
+      "ignore_incoming": "[]",
+      "ignore_mqtt": true,
+      "config_ok_to_mqtt": false
+    },
+    "bluetooth": {
+      "enabled": true,
+      "mode": 0,
+      "fixed_pin": 123456
+    },
+    "version": 0,
+    "security": {
+      "public_key": "sNZmA852hDrMibTxM0uqbNO1MpYZ3onUujDFlybg8io=",
+      "private_key": "QNlvNe2h1n4UV4FcZeKLzhShl6sPAWzrk+wD6HnMakw=",
+      "admin_key": [
+        "yHhzN3JvfAX+hIqRftiMx+6ouuRl65GdIWc71iLh030=",
+        "YCdOdKyQySBHveRSTSg/TtMFkuuCPxJS2D2SJ7GiS08=",
+        ""
+      ],
+      "is_managed": false,
+      "admin_channel_enabled": false,
+      "serial_enabled": true,
+      "debug_log_api_enabled": false
+    }
+  },
+  "module_config": {
+    "mqtt": {
+      "enabled": false,
+      "address": "mqtt.meshtastic.org",
+      "username": "meshdev",
+      "password": "large4cats",
+      "encryption_enabled": true,
+      "json_enabled": false,
+      "tls_enabled": false,
+      "root": "msh",
+      "proxy_to_client_enabled": false,
+      "map_reporting_enabled": false,
+      "map_report_settings": {
+        "publish_interval_secs": 0,
+        "position_precision": 0,
+        "should_report_location": false
+      }
+    },
+    "serial": {
+      "enabled": false,
+      "echo": false,
+      "rxd": 0,
+      "txd": 0,
+      "baud": 0,
+      "timeout": 0,
+      "mode": 0,
+      "override_console_serial_port": false
+    },
+    "external_notification": {
+      "enabled": false,
+      "output_ms": 0,
+      "output": 0,
+      "output_vibra": 0,
+      "output_buzzer": 0,
+      "active": false,
+      "alert_message": false,
+      "alert_message_vibra": false,
+      "alert_message_buzzer": false,
+      "alert_bell": false,
+      "alert_bell_vibra": false,
+      "alert_bell_buzzer": false,
+      "use_pwm": false,
+      "nag_timeout": 0,
+      "use_i2s_as_buzzer": false
+    },
+    "store_forward": {
+      "enabled": false,
+      "heartbeat": false,
+      "records": 0,
+      "history_return_max": 0,
+      "history_return_window": 0,
+      "is_server": false
+    },
+    "range_test": {
+      "enabled": false,
+      "sender": 60,
+      "save": false,
+      "clear_on_reboot": false
+    },
+    "telemetry": {
+      "device_update_interval": 1800,
+      "environment_update_interval": 0,
+      "environment_measurement_enabled": false,
+      "environment_screen_enabled": false,
+      "environment_display_fahrenheit": false,
+      "air_quality_enabled": false,
+      "air_quality_interval": 0,
+      "power_measurement_enabled": false,
+      "power_update_interval": 0,
+      "power_screen_enabled": false,
+      "health_measurement_enabled": false,
+      "health_update_interval": 0,
+      "health_screen_enabled": false,
+      "device_telemetry_enabled": true,
+      "air_quality_screen_enabled": false
+    },
+    "canned_message": {
+      "rotary1_enabled": false,
+      "inputbroker_pin_a": 0,
+      "inputbroker_pin_b": 0,
+      "inputbroker_pin_press": 0,
+      "inputbroker_event_cw": 0,
+      "inputbroker_event_ccw": 0,
+      "inputbroker_event_press": 0,
+      "updown1_enabled": false,
+      "enabled": true,
+      "allow_input_source": "",
+      "send_bell": false
+    },
+    "audio": {
+      "codec2_enabled": false,
+      "ptt_pin": 0,
+      "bitrate": 0,
+      "i2s_ws": 0,
+      "i2s_sd": 0,
+      "i2s_din": 0,
+      "i2s_sck": 0
+    },
+    "remote_hardware": {
+      "enabled": false,
+      "allow_undefined_pin_access": false,
+      "available_pins": "[]"
+    },
+    "neighbor_info": {
+      "enabled": true,
+      "update_interval": 14400,
+      "transmit_over_lora": false
+    },
+    "ambient_lighting": {
+      "led_state": false,
+      "current": 10,
+      "red": 222,
+      "green": 95,
+      "blue": 123
+    },
+    "detection_sensor": {
+      "enabled": false,
+      "minimum_broadcast_secs": 45,
+      "state_broadcast_secs": 0,
+      "send_bell": false,
+      "name": "",
+      "monitor_pin": 0,
+      "detection_trigger_type": 1,
+      "use_pullup": false
+    },
+    "paxcounter": {
+      "enabled": false,
+      "paxcounter_update_interval": 0,
+      "wifi_threshold": 0,
+      "ble_threshold": 0
+    },
+    "statusmessage": {
+      "node_status": ""
+    },
+    "traffic_management": {
+      "enabled": false,
+      "position_dedup_enabled": false,
+      "position_precision_bits": 0,
+      "position_min_interval_secs": 0,
+      "nodeinfo_direct_response": false,
+      "nodeinfo_direct_response_max_hops": 0,
+      "rate_limit_enabled": false,
+      "rate_limit_window_secs": 0,
+      "rate_limit_max_packets": 0,
+      "drop_unknown_enabled": false,
+      "unknown_packet_threshold": 0,
+      "exhaust_hop_telemetry": false,
+      "exhaust_hop_position": false,
+      "router_preserve_hops": false
+    },
+    "version": 0
+  },
+  "channels": [
+    {
+      "index": 0,
+      "settings": {
+        "channel_num": 0,
+        "psk": "237b9ad73d0502d1238c26c991476d3948d6442188393c207506f3a1ce0fcc93",
+        "name": "Default",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 32,
+          "is_muted": false
+        }
+      },
+      "role": 1
+    },
+    {
+      "index": 1,
+      "settings": {
+        "channel_num": 0,
+        "psk": "187e9dafc25adafb214632f1dba80184342805425b3596b1402919249d963cfe",
+        "name": "C1",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 32,
+          "is_muted": false
+        }
+      },
+      "role": 2
+    },
+    {
+      "index": 2,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 32,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    },
+    {
+      "index": 3,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 0,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    },
+    {
+      "index": 4,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 0,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    },
+    {
+      "index": 5,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 0,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    },
+    {
+      "index": 6,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 0,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    },
+    {
+      "index": 7,
+      "settings": {
+        "channel_num": 0,
+        "psk": "",
+        "name": "",
+        "id": 0,
+        "uplink_enabled": false,
+        "downlink_enabled": false,
+        "module_settings": {
+          "position_precision": 0,
+          "is_muted": false
+        }
+      },
+      "role": 0
+    }
+  ],
+  "known_nodes": {
+    "!1666a7f9": {
+      "num": 375826425,
+      "user": {
+        "id": "!1666a7f9",
+        "longName": "GB a7f9",
+        "shortName": "GB",
+        "macaddr": "5fUWZqf5",
+        "hwModel": "T_ECHO",
+        "publicKey": "sNZmA852hDrMioTxM0aqbNO7MpYZ3omUujDFlybg8io="
+      },
+      "position": {
+        "latitudeI": 488751818,
+        "longitudeI": 20899410,
+        "altitude": 105,
+        "time": 1778416493,
+        "locationSource": "LOC_INTERNAL",
+        "latitude": 48.8751818,
+        "longitude": 2.089941
+      },
+      "lastHeard": 1778416493,
+      "deviceMetrics": {
+        "batteryLevel": 70,
+        "voltage": 3.893,
+        "channelUtilization": 0.0,
+        "airUtilTx": 0.39902776,
+        "uptimeSeconds": 7805
+      },
+      "isFavorite": true
+    },
+    "!67de5f7b": {
+      "num": 1742626683,
+      "user": {
+        "id": "!67de5f7b",
+        "longName": "Jmc_5F7B",
+        "shortName": "JMC",
+        "macaddr": "6vJn3l97",
+        "hwModel": "T_ECHO",
+        "publicKey": "yHhzN3JvfAX+hIqRftiMx+6uIKRl65GcIWc71iLh030=",
+        "isUnmessagable": false
+      },
+      "position": {
+        "latitudeI": 488752071,
+        "longitudeI": 20899688,
+        "altitude": 109,
+        "time": 1778415133,
+        "locationSource": "LOC_INTERNAL",
+        "latitude": 48.8752071,
+        "longitude": 2.0899688
+      },
+      "snr": 5.75,
+      "lastHeard": 1778416242,
+      "deviceMetrics": {
+        "batteryLevel": 65,
+        "voltage": 3.852,
+        "channelUtilization": 0.0,
+        "airUtilTx": 0.30441666,
+        "uptimeSeconds": 3306
+      },
+      "hopsAway": 0
+    },
+    "!766492b9": {
+      "num": 1986302649,
+      "user": {
+        "id": "!766492b9",
+        "longName": "Didier 92b9",
+        "shortName": "DB",
+        "macaddr": "13h2ZJK5",
+        "hwModel": "T_ECHO",
+        "publicKey": "nIwophsJoUZSNtN7RtUzKOtjF8KLaxDLY2hVx0fEPAI="
+      },
+      "position": {
+        "latitudeI": 488752755,
+        "longitudeI": 20898468,
+        "altitude": 93,
+        "time": 1778415947,
+        "locationSource": "LOC_INTERNAL",
+        "latitude": 48.8752755,
+        "longitude": 2.0898468
+      },
+      "snr": 6.0,
+      "lastHeard": 1778415979,
+      "deviceMetrics": {
+        "batteryLevel": 101,
+        "voltage": 4.768,
+        "channelUtilization": 8.928333,
+        "airUtilTx": 0.35402778,
+        "uptimeSeconds": 2225
+      },
+      "hopsAway": 0
+    },
+    "!4c538466": {
+      "num": 1280541798,
+      "user": {
+        "id": "!4c538466",
+        "longName": "Zetaz 8466",
+        "shortName": "Zeta",
+        "macaddr": "1DBMU4Rm",
+        "hwModel": "T_ECHO",
+        "publicKey": "YCdOdKyQySBHveRSTSg/TtMFkqmCxxJS2D2dJ7GiS08=",
+        "isUnmessagable": false
+      },
+      "position": {
+        "latitudeI": 488751426,
+        "longitudeI": 20894583,
+        "altitude": 35,
+        "time": 1778415520,
+        "locationSource": "LOC_INTERNAL",
+        "latitude": 48.8751426,
+        "longitude": 2.0894583
+      },
+      "snr": 6.5,
+      "lastHeard": 1778415671,
+      "deviceMetrics": {
+        "batteryLevel": 76,
+        "voltage": 3.95,
+        "channelUtilization": 0.0,
+        "airUtilTx": 0.39680552,
+        "uptimeSeconds": 2226
+      },
+      "hopsAway": 0
+    },
+    "!335c1680": {
+      "num": 861673088,
+      "user": {
+        "id": "!335c1680",
+        "longName": "Mathieu C 1680",
+        "shortName": "MC",
+        "macaddr": "ZOgzXBaA",
+        "hwModel": "HELTEC_V3",
+        "publicKey": "Ddre3sVfSODGW/rN8Ld4fSgMcect6MJnc30xTBOhukU="
+      },
+      "snr": 6.0,
+      "lastHeard": 1778415264,
+      "hopsAway": 0
+    },
+    "!33697710": {
+      "num": 862549776,
+      "user": {
+        "id": "!33697710",
+        "longName": "Lauryan 7710",
+        "shortName": "LA",
+        "macaddr": "ZOgzaXcQ",
+        "hwModel": "HELTEC_V3",
+        "publicKey": "0VtGCnFMHp6aMrHcvTq02J4nM/TabZVT8ocZERh6SAM=",
+        "isUnmessagable": false
+      },
+      "snr": 5.5,
+      "lastHeard": 1778414944,
+      "hopsAway": 0
+    }
+  },
+  "_profile_date": "2026-05-18T10:37:32.359753"
+}
