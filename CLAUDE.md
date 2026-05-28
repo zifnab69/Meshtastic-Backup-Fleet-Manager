@@ -264,6 +264,14 @@ ou place-le dans la structure ci-dessus selon son rôle.
 - **Profil flotte** : `profil_flotte_[YYYYMMDD]_[HHMMSS].NBFM`
 - **Rapport HTML** : `NBFM_report_[YYYYMMDD_HHMMSS].html`
 
+### Règle absolue — zéro régression
+Avant toute modification d'une fonction existante :
+1. Comprendre précisément ce qu'elle fait aujourd'hui
+2. Identifier les cas limites et les fallbacks en place
+3. S'assurer que le comportement résultant est identique ou strictement meilleur
+4. Ajouter le nouveau comportement *en complément*, pas en remplacement, si le moindre doute subsiste
+5. Ne jamais supprimer un fallback existant, même s'il semble inutile
+
 ### Gestion des erreurs
 - Broad `try/except Exception` partout — priorité à la robustesse sur la précision
 - Toujours un fallback (ex : `writeConfig` seul si `ParseDict` échoue)
@@ -297,6 +305,7 @@ ou place-le dans la structure ci-dessus selon son rôle.
 
 | Contrainte | Détail |
 |---|---|
+| **Zéro régression** | Toute modification du code doit préserver le comportement existant. Avant de changer une fonction : identifier ce qu'elle fait, s'assurer que le résultat est identique ou strictement meilleur. En cas de doute, ajouter le nouveau comportement *à côté* de l'ancien, pas à la place. Les fallbacks existants ne doivent jamais être supprimés. |
 | Client web officiel | Le paramétrage source se fait sur https://client.meshtastic.org — NBFM est un outil de backup/déploiement, pas un configurateur complet |
 | Exhaustivité de l'import | Tous les modules et sections présents dans le JSON doivent être restaurés, y compris les inconnus. Ne jamais ignorer silencieusement un champ. |
 | Windows uniquement | `os.startfile()`, COM ports style Windows |
