@@ -1567,7 +1567,8 @@ class NBFMApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Nodes Backup & Fleet Manager v1.78")
-        self.root.geometry("930x840")
+        # Taille Fenetre principale
+        self.root.geometry("1000x840")
         self.root.resizable(True, True)
         self.work_dir = APP_DIR
         self._notes: dict = {}
@@ -2689,9 +2690,10 @@ class NBFMApp:
         except Exception as e:
             messagebox.showerror(T["edit_invalid_file"], str(e))
             return
-
+            
+# Panneau Editer champs clés Taille
         win = tk.Toplevel(self.root)
-        win.geometry("520x750")
+        win.geometry("520x800")
         win.resizable(True, True)
         win.grab_set()
 
