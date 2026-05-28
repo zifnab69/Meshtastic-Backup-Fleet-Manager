@@ -6,6 +6,7 @@
 
 ## Table des matières
 
+- [**État du projet — mai 2026 (lire en premier)**](#état-du-projet--mai-2026-lire-en-premier)
 1. [Objectif global](#1-objectif-global)
 2. [Contexte technique](#2-contexte-technique)
 3. [Structure du projet](#3-structure-du-projet)
@@ -15,6 +16,76 @@
 7. [Conventions de code](#7-conventions-de-code)
 8. [Contraintes spécifiques](#8-contraintes-spécifiques)
 9. [Roadmap / TODO](#9-roadmap--todo)
+
+---
+
+## État du projet — mai 2026 (lire en premier)
+
+### Ce que fait le logiciel en l'état actuel — ce qui fonctionne
+
+L'application est **fonctionnelle et utilisée sur matériel réel** (T-Echo, Heltec V3).
+Script actif : `NBFM_20260528_1135.py` (sur disque : `NBFMV1_78.py`, ~3100 lignes, fichier unique).
+
+| Fonctionnalité | État |
+|---|---|
+| Export complet d'un nœud → fichier .NBFM | ✅ Fonctionnel |
+| Restauration .NBFM → nœud | ⚠️ Fonctionnel mais incomplet (voir bugs) |
+| Génération profil flotte | ✅ Fonctionnel |
+| Éditeur champs clés (owner, LoRa, canaux, PSK) | ✅ Fonctionnel |
+| Export/import multi-nœuds séquentiels | ✅ Fonctionnel |
+| Groupement par MAC dans la liste des fichiers | ✅ Fonctionnel |
+| Tooltip au survol (nom long, région, canal 2, nœuds connus) | ✅ Fonctionnel |
+| UI bilingue FR/EN commutable sans redémarrage | ✅ Fonctionnel |
+| Rapport HTML exportable | ✅ Fonctionnel |
+| Validation d'intégrité avant restauration | ✅ Fonctionnel |
+| Générateur de clés PSK (AES-128 / AES-256) | ✅ Fonctionnel |
+| Compilation EXE via PyInstaller | ✅ Fonctionnel |
+
+### Bugs connus et leur emplacement précis dans le code
+
+#### Bug 1 — Import non exhaustif des modules (priorité haute)
+**Fichier** : `NBFMV1_78.py`, lignes ~580–587  
+**Problème** : liste blanche codée en dur — 4 modules présents sur matériel réel (T-Echo) ne sont **jamais restaurés** :
+```python
+# Code actuel — liste fixe, incomplète
+for section in ["mqtt", "serial", "external_notification", "store_forward",
+                "range_test", "telemetry", "canned_message",
+                "neighbor_info", "ambient_lighting", "detection_sensor", "paxcounter"]:
+```
+Modules manquants : `statusmessage`, `traffic_management`, `audio`, `remote_hardware`.  
+**Correction attendue** : remplacer par une boucle `for section, data in module_cfg.items()` qui itère sur toutes les clés du JSON, inconnues incluses.
+
+#### Bug 2 — Import non exhaustif de local_config (priorité haute)
+**Fichier** : `NBFMV1_78.py`, ligne ~574  
+**Problème** : même principe — liste fixe de 8 sections, si le firmware ajoute une section elle sera ignorée :
+```python
+# Code actuel — liste fixe
+for section in ["device", "position", "power", "network", "display", "lora", "bluetooth", "security"]:
+```
+**Correction attendue** : itérer sur `local_cfg.keys()`, avec traitement spécial de `security` (déjà géré) et exclusion de `version` (compteur interne).
+
+#### Bug 3 — NBFM_Config.json non créé en anglais
+**Fichier** : `NBFMV1_78.py`, lignes ~952–965 (`save_lang`) et `~1578` (`NBFMApp.__init__`)  
+**Problème** : `save_lang()` n'est appelé que quand l'utilisateur change de langue via les boutons FR/EN. Si l'utilisateur reste en anglais (langue par défaut), le fichier n'est jamais créé, empêchant toute persistance future de préférences.  
+**Correction attendue** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement.
+
+#### Bug 4 — Dossier de travail non persisté
+**Fichier** : `NBFMV1_78.py`, ligne ~1573 (`self.work_dir = APP_DIR`)  
+**Problème** : à chaque lancement, `work_dir` est réinitialisé au dossier du script. L'utilisateur doit resélectionner son dossier de sauvegarde à chaque fois.  
+**Correction attendue** : lire `work_dir` depuis `NBFM_Config.json` au démarrage, sauvegarder à chaque changement via `choose_work_dir()`.
+
+### Règles non négociables pour toute modification
+
+1. **Zéro régression** — tout changement préserve le comportement existant. En cas de doute, ajouter *à côté*, pas à la place.
+2. **Import exhaustif** — jamais de liste blanche de modules/sections. Tout ce qui est dans le JSON doit être restauré.
+3. **NBFM = backup/déploiement, pas configurateur** — le paramétrage source reste sur https://client.meshtastic.org.
+4. **Nommage** — tout nouveau fichier Python : `NBFM_YYYYMMDD_HHMM.py`.
+
+### Fichier de référence matériel disponible
+
+`meshtastic_GB_A7F9_20260525_094518.nbfm` — export réel d'un T-Echo (EU868, 869.5 MHz, MediumSlow).  
+Utiliser ce fichier pour valider tout développement sur le parsing/import/export.  
+Contient : 2 canaux actifs (AES-256), 6 nœuds connus, modules `statusmessage` + `traffic_management` + `audio` + `remote_hardware`, `adc_multiplier_override: 2.0`.
 
 ---
 
