@@ -10,10 +10,11 @@
 2. [Contexte technique](#2-contexte-technique)
 3. [Structure du projet](#3-structure-du-projet)
 4. [Workflow d'exécution](#4-workflow-dexécution)
-5. [Architecture du code](#5-architecture-du-code)
-6. [Conventions de code](#6-conventions-de-code)
-7. [Contraintes spécifiques](#7-contraintes-spécifiques)
-8. [Roadmap / TODO](#8-roadmap--todo)
+5. [Format NBFM réel](#5-format-nbfm-réel--observations-sur-fichier-de-référence)
+6. [Architecture du code](#6-architecture-du-code)
+7. [Conventions de code](#7-conventions-de-code)
+8. [Contraintes spécifiques](#8-contraintes-spécifiques)
+9. [Roadmap / TODO](#9-roadmap--todo)
 
 ---
 
@@ -23,9 +24,26 @@ Application desktop **Python/Tkinter** pour **sauvegarder, restaurer et déploye
 
 **Public cible** : utilisateurs Meshtastic (radioamateurs, équipes de communication d'urgence) qui veulent gérer plusieurs nœuds ou déployer une config commune en flotte.
 
+### Philosophie de conception — à garder en tête en permanence
+
+Le paramétrage fin du matériel Meshtastic se fait via le client web officiel
+(**https://client.meshtastic.org**), qui expose toutes les fonctionnalités à jour des firmwares.
+**NBFM n'a pas vocation à remplacer ce site.**
+
+Le rôle de NBFM est strictement :
+1. **Sauvegarder** fidèlement 100 % de la configuration d'un nœud
+2. **Restaurer** fidèlement 100 % de cette configuration, y compris les sections que l'UI n'expose pas
+3. **Générer des profils flotte** (config commune déployable sur plusieurs nœuds)
+4. **Modifier à la marge** quelques paramètres courants (région LoRa, canaux, owner, PSK…)
+
+> **Conséquence directe pour le code** : l'export et l'import doivent traiter *tous* les champs
+> et *tous* les modules présents dans le JSON — même les inconnus. Ne jamais ignorer
+> silencieusement une section sous prétexte que l'UI ne l'expose pas.
+> Un paramètre non géré par l'UI doit quand même être sauvegardé et restauré.
+
 **Fonctionnalités principales** :
 - Export complet de la config d'un nœud → fichier JSON (.NBFM)
-- Restauration complète d'un fichier .NBFM → nœud
+- Restauration complète d'un fichier .NBFM → nœud (tous les champs, sans exception)
 - Génération de profil flotte (suppression des clés uniques, conservation de l'admin_key et de la config LoRa/canaux)
 - Export/import multi-nœuds séquentiels dans une même session
 - Éditeur intégré : région LoRa, modem preset, noms de canaux, clés PSK, rôle appareil
@@ -121,7 +139,47 @@ Le code gère les deux modes via `get_app_dir()` : `sys.frozen` pour l'EXE, `__f
 
 ---
 
-## 5. Architecture du code
+## 5. Format NBFM réel — observations sur fichier de référence
+
+> Fichier de référence : `meshtastic_GB_A7F9_20260525_094518.nbfm` (T-Echo, EU868, MediumSlow, 869.5 MHz)
+
+### Structure JSON constatée sur matériel réel
+
+| Champ | Valeur observée / notes |
+|---|---|
+| `_app_version` | `"2.2"` — évolue avec les versions du script (actuellement `"2.6"`) |
+| `_export_date` | ISO 8601 avec microsecondes |
+| `_profile_date` | Peut coexister avec `_export_date` sur des fichiers issus d'anciennes versions — ne pas supposer que sa présence signifie profil flotte (vérifier `_profile_type`) |
+| `my_info.nodedb_count` | Nombre de nœuds connus au moment de l'export |
+| `my_info.pio_env` | Environnement PlatformIO du firmware (ex : `"t-echo-inkhud"`) |
+| `local_config.lora.override_frequency` | Float en MHz (ex : `869.5`) — prioritaire sur `frequency` pour l'affichage |
+| `local_config.lora.override_duty_cycle` | `true` sur T-Echo France (contournement limite légale 1% duty cycle EU868) |
+| `local_config.power.adc_multiplier_override` | `2.0` sur T-Echo — c'est ce que l'option "clear ADC" supprime |
+| `local_config.device.tzdef` | Fuseau horaire POSIX (`"CET-1CEST,M3.5.0/2:00:00,M10.5.0/3:00:00"` pour la France) |
+| `local_config.security.admin_key` | Liste de 3 entrées (2 clés base64 + 1 chaîne vide `""`) — forme normale sur T-Echo |
+| `channels` | Liste de 8 objets (index 0–7), toujours présents même si désactivés (role=0, PSK="") |
+| `channels[n].settings.psk` | Hex string 64 chars = 32 bytes = AES-256 ; 32 chars = AES-128 ; `""` = canal désactivé |
+| `known_nodes` | Dict keyed par `!hex_node_id` (ex : `"!1666a7f9"`) — **pas une liste** |
+| `known_nodes[id].user.publicKey` | Base64 — correspond aux valeurs de `security.admin_key` pour les nœuds de confiance |
+
+### Modules présents dans ce fichier mais absents de la liste d'import actuelle
+
+Le code import (`import_full_config`) ne traite pas ces modules qui existent pourtant sur du matériel réel :
+
+| Module | Présent dans le fichier | Traité par l'import |
+|---|---|---|
+| `statusmessage` | ✓ | ✗ — manquant |
+| `traffic_management` | ✓ | ✗ — manquant |
+| `audio` | ✓ | ✗ — manquant |
+| `remote_hardware` | ✓ | ✗ — manquant |
+
+### Extension de fichier
+Le fichier de référence utilise l'extension `.nbfm` (minuscules). Le code recherche `*.NBFM` (majuscules). Sous Windows le filesystem est insensible à la casse — ça fonctionne. Sur Linux ce serait cassé. À garder en tête si portabilité Linux envisagée.
+
+---
+
+## 6. Architecture du code
+
 
 ### Organisation actuelle — fichier unique
 
@@ -198,7 +256,7 @@ ou place-le dans la structure ci-dessus selon son rôle.
 
 ---
 
-## 6. Conventions de code
+## 7. Conventions de code
 
 ### Nommage des fichiers créés
 - **Scripts Python** : `NBFM_YYYYMMDD_HHMM.py` — jamais de numéro de version `V1_XX`
@@ -235,10 +293,12 @@ ou place-le dans la structure ci-dessus selon son rôle.
 
 ---
 
-## 7. Contraintes spécifiques
+## 8. Contraintes spécifiques
 
 | Contrainte | Détail |
 |---|---|
+| Client web officiel | Le paramétrage source se fait sur https://client.meshtastic.org — NBFM est un outil de backup/déploiement, pas un configurateur complet |
+| Exhaustivité de l'import | Tous les modules et sections présents dans le JSON doivent être restaurés, y compris les inconnus. Ne jamais ignorer silencieusement un champ. |
 | Windows uniquement | `os.startfile()`, COM ports style Windows |
 | COM1 exclu | Port système Windows (BIOS/souris), jamais un appareil USB Meshtastic |
 | Redémarrage obligatoire | Après toute restauration, l'appareil doit être redémarré manuellement |
@@ -250,9 +310,10 @@ ou place-le dans la structure ci-dessus selon son rôle.
 
 ---
 
-## 8. Roadmap / TODO
+## 9. Roadmap / TODO
 
 ### Priorité haute
+- [ ] **Import exhaustif des modules** : remplacer la liste blanche codée en dur (`mqtt`, `serial`, etc.) par une boucle sur **tous** les modules présents dans le JSON — y compris `statusmessage`, `traffic_management`, `audio`, `remote_hardware` et tout futur module firmware inconnu. Même principe pour `local_config` : itérer sur toutes les clés présentes, pas une liste fixe. C'est une exigence fondamentale (voir Philosophie de conception).
 - [ ] **Persistance du dossier de travail** dans `NBFM_Config.json` (perdu à chaque lancement)
 - [ ] **`NBFM_Config.json` créé quelle que soit la langue** : actuellement le fichier n'est créé que si l'utilisateur choisit le français. Il doit être créé dès le premier lancement (EN ou FR) pour pouvoir stocker la préférence de langue et, à terme, d'autres réglages. Le port COM **ne doit pas** être persisté (il change à chaque appareil branché).
 - [ ] **Documenter la commande PyInstaller** dans le README (commande exacte + options `--icon`, `--add-data`)
