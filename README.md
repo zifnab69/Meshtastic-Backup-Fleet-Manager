@@ -4,7 +4,7 @@
 
 # Nodes Backup & Fleet Manager
 
-A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic node configurations** over USB on Windows.
+A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic node configurations** over USB on Windows (and MAC\Linux).
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)
