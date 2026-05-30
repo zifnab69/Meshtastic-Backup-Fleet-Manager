@@ -15,65 +15,50 @@
 6. [Architecture du code](#6-architecture-du-code)
 7. [Conventions de code](#7-conventions-de-code)
 8. [Contraintes spécifiques](#8-contraintes-spécifiques)
-9. [Roadmap / TODO](#9-roadmap--todo)
+9. [Notes API Meshtastic Python](#9-notes-api-meshtastic-python--faits-confirmés)
+10. [Roadmap / TODO](#10-roadmap--todo)
 
 ---
 
-## État du projet — 30 mai 2026 (lire en premier)
+## État du projet — 31 mai 2026 (lire en premier)
 
 ### ▶ POUR REPRENDRE LA PROCHAINE FOIS
 
-- **Fichier de travail actif** : `NBFM_20260530_1850.py`. Compile OK. Fonctionnel sur matériel réel.
-- **Dernier état** : restauration vérifiée OK (lora appliqué, canaux dans le bon ordre, owner correct, modifs prises en compte). Tableau de la liste complet (modèle/rôle/région/modem). Plus de message d'erreur bloquant.
-- **PROCHAINE ACTION prévue** : implémenter la **barre de progression de la restauration** (voir Roadmap §10, priorité haute — piste d'implémentation détaillée).
+- **Fichier de travail actif** : `NBFM_20260531_0001.py` (~3460 lignes, fichier unique). Compile OK. Fonctionnel sur matériel réel (T-Echo, Heltec V3).
+- **État** : application stable. **Aucun bug bloquant.** Tous les bugs A, B, C, E–L sont corrigés et validés. **Seul Bug D reste ouvert** (basse priorité, neutralisé — voir §Bug D).
 - **Avant toute modif** : appliquer le protocole de versioning (timestamp FR → copie dans `Backup/` → renommer en `NBFM_YYYYMMDD_HHMM.py` → modifier → `py_compile`).
-- **Environnement critique à ne pas oublier** : **protobuf 7.34.1 / Python 3.14** (voir pièges ci-dessous). Toujours tester en intégration avec un faux nœud + vrais protos `localonly_pb2`/`channel_pb2`.
+- **Environnement critique** : **protobuf 7.34.1 / Python 3.14** (voir Pièges). Toujours tester en intégration avec un faux nœud + vrais protos `localonly_pb2`/`channel_pb2`.
+
+### ★ Pistes d'évolution proposées (rappel demandé par l'utilisateur)
+
+À proposer / faire quand l'utilisateur le souhaite (aucune urgente) :
+
+| Piste | Priorité | Note |
+|---|---|---|
+| ✅ Validation longueur PSK dans l'éditeur | — | **FAIT (0001)** — bloque la sauvegarde si la clé Base64 ≠ 1/16/32 octets |
+| Rapport CSV (en plus du HTML) | moyenne | Réutiliser la génération HTML existante |
+| Firmware dans la bulle de survol | moyenne | Champ `metadata`, sans nouvelle colonne |
+| Support YAML natif à l'import | moyenne | Le glob accepte déjà `*.yaml/*.yml` mais `import_full_config` ne lit que JSON |
+| Doc PyInstaller dans le README | moyenne | Commande exacte + `--icon`, `--windowed` |
+| Icône d'application pour l'EXE | basse | `--icon=nbfm.ico` |
+| Auto-détection port par VID/PID (CP210x/CH340) | basse | Pré-sélection plus fine |
+| Mode ligne de commande (sans GUI) | basse | Automatisation de flotte |
+| Bug D — `statusmessage` inscriptible | basse | Voie alternative API à investiguer |
+
+### Travaux récents (résumé)
+
+- **Validation longueur PSK (0001)** : éditeur — `_validate_psk_b64()` dans `save_and_close` bloque la sauvegarde et avertit si une clé Base64 ne décode pas en 1/16/32 octets (avant : longueur non vérifiée → rejet silencieux du firmware).
+- **Persistance langue + dossier (2348, Bugs A/B)** : `save_lang()` au démarrage dans `__init__` (crée `NBFM_Config.json` même en anglais) ; helpers `load_work_dir()`/`save_work_dir()`, lecture au démarrage, persistance dans `choose_work_dir()` + 3 chemins export. **Port COM non persisté.**
+- **Barre de progression restauration (2332)** : `import_full_config(iface, config, progress=cb)` ; callback `progress(done,total,kind,detail)` ; UI `_open_progress(threaded=...)` + `_progress_label()` (mono-nœud=thread+`root.after` ; multi-nœuds=synchrone+`win.update()`).
+- **Aide in-app FR+EN à jour** + **`RELEASE_NOTES.md`** (notes de version GitHub bilingues : fonctions absentes de la page des releases).
+- **Bug L (PSK base64 vs hex) corrigé (2308, validé matériel réel)** : l'export stocke la PSK en base64 mais l'import la décodait en hex (`bytes.fromhex`) → clés perdues. Fix : `_psk_str_to_bytes()` tolère hex ET base64 (contrôle de longueur 1/16/32 o pour désambiguïser), utilisé dans les 2 chemins d'import canaux.
 
 ### Script actif
 
-`NBFM_20260530_1850.py` (~3310 lignes, fichier unique).  
-Backups (les plus récents) : `Backup/NBFM_20260530_1823.py`, `1754.py`, `1749.py`, `1703.py`, `1621.py`, `1402.py`.  
-Versions de référence antérieures : `NBFM_20260528_1135.py`, `NBFM_20260527_1612.py`, `NBFM_20260520_1318.py`.
+`NBFM_20260531_0001.py` (~3460 lignes, fichier unique).  
+Backups les plus récents dans `Backup/` (du plus récent au plus ancien) : `NBFM_20260530_2348.py`, `2332.py`, `2308.py`, `1850.py`, `1823.py`, `1749.py`, `1402.py`.
 
-### Session 30/05/2026 — résumé (lire en premier)
-
-> Longue session de debug autour d'un symptôme : « la restauration ne change rien sur l'appareil ».
-> Plusieurs fausses pistes avant la vraie cause racine. Résumé condensé ci-dessous ; détails par bug
-> dans la section « Bugs ouverts/résolus ».
-
-**La cause racine (Bug E réel)** : l'environnement tourne sous **protobuf 7.34.1 / Python 3.14**, qui a
-supprimé/renommé deux API utilisées par NBFM :
-1. `MessageToDict(including_default_value_fields=True)` → renommé `always_print_fields_with_no_presence`.
-   L'ancien levait `TypeError` → `proto_to_dict` tombait dans un fallback qui sérialisait les champs
-   `repeated` via `str()` → `lora.ignore_incoming = '[]'` (chaîne au lieu de liste).
-2. `FieldDescriptor.label` → supprimé en upb (AttributeError). `_coerce_repeated_fields` l'utilisait →
-   no-op silencieux → le `'[]'` n'était jamais réparé.
-   
-   Combinés : `ParseDict` échouait sur toute la section `lora` → fallback → **modifs LoRa perdues en silence**.
-
-**Fix racine (1749/1823)** : `proto_to_dict` (~L.159) appelle MessageToDict avec
-`always_print_fields_with_no_presence=True` **et** `use_integers_for_enums=True` (enums en int, pas en
-noms — sinon casse le tableau et la restauration des canaux, cf. H/I). Helpers de tolérance :
-`_field_is_repeated()` (is_repeated/label), `_coerce_repeated_fields()` (`'[]'`→`[]`),
-`_channel_role_to_int()` ("PRIMARY"→1), `_enum_short_label()` (read_file_meta tolère int OU nom).
-
-**Ce qui a été corrigé cette session** (tous vérifiés par tests d'intégration avec faux nœud + vrais protos) :
-
-| Bug | Sujet | Fix |
-|---|---|---|
-| **E** | LoRa no-op (cause racine protobuf 7.x) | proto_to_dict + coerce + `use_integers_for_enums` |
-| **F** | `Error: No valid config with name statusmessage` (shell) | `_write_config_quiet()` redirige stdout (~L.574) |
-| **G** | Restauration no-op via clé de session admin périmée | transaction `begin/commitSettingsTransaction` + `time.sleep(0.5)` après chaque écriture (~L.724). **NB : G n'était PAS le vrai symptôme utilisateur (c'était E), mais c'est une vraie amélioration alignée sur le CLI officiel — conservée.** |
-| **H** | Tableau : modèle/rôle/région/modem = « ? » | `use_integers_for_enums` + `_enum_short_label()` |
-| **I** | Décalage des canaux + canal 0 fantôme `AQ==` | `use_integers_for_enums` + `_channel_role_to_int()` |
-| **J** | Éditeur : PSK non effaçable | champ vide → `psk=""` (~L.3245) |
-| **K** | Validation noms de canaux identiques | refus de sauvegarde si doublon |
-| — | `SystemExit` (our_exit) tuait le thread d'import | `except SystemExit` dans `_apply_section/module` |
-| — | `short_name` pollué par suffixe MAC → corrompu à l'import | découplage : MAC dérivée de `my_info.my_node_num` |
-| — | `re` non importé (régression interne) → owner non restauré | `re` remonté au niveau module (~L.31) |
-| — | override_duty_cycle (demande) | case à cocher dans l'éditeur (~L.3061) |
-
-**Pièges/leçons retenus** :
+### Pièges & leçons techniques durables (À LIRE avant de toucher export/import)
 - **protobuf 7.x (upb)** : ne JAMAIS supposer l'API descriptor. Utiliser `field.is_repeated` (pas `.label`).
   MessageToDict : `always_print_fields_with_no_presence` + `use_integers_for_enums` impératifs.
 - **`our_exit()` de la lib Meshtastic → `sys.exit()` → `SystemExit`** (hérite de BaseException). `except
@@ -89,64 +74,27 @@ noms — sinon casse le tableau et la restauration des canaux, cf. H/I). Helpers
   (= clé par défaut, cf. `util.py:68 bytes([1])`). **Le nommer « default » changerait le hash → incompatibilité.**
   Donc `clear_channels` garde `name=""` : c'est correct, NE PAS mettre « default ».
 
-### Ce que fait le logiciel en l'état actuel — ce qui fonctionne
+### Ce que fait le logiciel — ce qui fonctionne
 
-L'application est **fonctionnelle et utilisée sur matériel réel** (T-Echo, Heltec V3).
+L'application est **fonctionnelle et utilisée sur matériel réel** (T-Echo, Heltec V3). Tout est ✅ fonctionnel :
 
-| Fonctionnalité | État |
-|---|---|
-| Export complet d'un nœud → fichier .NBFM | ✅ Fonctionnel |
-| Restauration .NBFM → nœud | ✅ Fonctionnel (corrigé en profondeur le 30/05 — lora, canaux, owner, transaction) |
-| Case override_duty_cycle dans l'éditeur | ✅ Ajouté session 30/05 |
-| Génération profil flotte | ✅ Fonctionnel |
-| Éditeur champs clés (owner, LoRa, canaux, PSK, rôle) | ✅ Fonctionnel |
-| "Supprimer tous les canaux" dans l'éditeur | ✅ Corrigé session 30/05 |
-| Import exhaustif local_config + modules | ✅ Corrigé session 30/05 |
-| Export/import multi-nœuds séquentiels | ✅ Fonctionnel |
-| Groupement par MAC dans la liste des fichiers | ✅ Fonctionnel |
-| Tooltip au survol (nom long, région, canal, nœuds connus) | ✅ Fonctionnel |
-| UI bilingue FR/EN commutable sans redémarrage | ✅ Fonctionnel |
-| Rapport HTML exportable | ✅ Fonctionnel |
-| Validation d'intégrité avant restauration | ✅ Fonctionnel |
-| Générateur de clés PSK (AES-128 / AES-256) | ✅ Fonctionnel |
-| Compilation EXE via PyInstaller | ✅ Fonctionnel |
+- Export complet d'un nœud → fichier `.NBFM` (tous les champs + tous les modules, même inconnus)
+- Restauration `.NBFM` → nœud (lora, canaux, owner, PSK, transaction admin) **avec barre de progression**
+- Génération de profil flotte (épure les clés uniques, conserve `admin_key` + LoRa + canaux)
+- Export / restauration multi-nœuds séquentiels
+- Éditeur de champs clés : owner, région LoRa, modem, fréquence override, override_duty_cycle, rôle, canaux 0-2 (nom + PSK) — **avec validation de longueur PSK**
+- Générateur de clés PSK (AES-128 / AES-256), « supprimer tous les canaux », nettoyage ADC / known_nodes
+- Liste : groupement par MAC, tri, renommage (double-clic), menu contextuel, bulles de survol, notes par fichier
+- Rapport HTML, validation d'intégrité avant restauration
+- UI bilingue FR/EN à chaud, persistance langue + dossier de travail (`NBFM_Config.json`)
+- Compilation EXE via PyInstaller
 
-### Corrections apportées — session 30/05/2026
+### Bugs — état
 
-Toutes les corrections ci-dessous sont dans `NBFM_20260530_1402.py`.
-
-| Correction | Localisation | Détail |
-|---|---|---|
-| `_apply_section_to_node` : Clear()+fallback dangereux | ~L.530 | Sauvegarde proto avant Clear() via CopyFrom ; restauration si ParseDict échoue. Avant : le fallback écrivait un proto à zéros sur l'appareil (role=0, tzdef="", etc.) |
-| `_apply_module_section` : même bug | ~L.590 | Même correction + ImportError séparé du except général |
-| `_coerce_repeated_fields()` | ~L.495 | Nouvelle fonction. Convertit les valeurs scalaires (`0`) en liste vide (`[]`) pour les champs `repeated` protobuf avant ParseDict. Corrige l'erreur "lora fallback, parsedict échoué: repeated field ignore_incoming must be in []" |
-| Import exhaustif local_config (ex-Bug 2) | ~L.633 | Itération dynamique sur `local_cfg.items()` au lieu d'une liste fixe de 8 sections |
-| Import exhaustif modules (ex-Bug 1) | ~L.643 | Itération dynamique sur `module_cfg.items()` ; couvre désormais `audio`, `remote_hardware`, `traffic_management` et tout futur module firmware |
-| `clear_channels` : canaux 1–7 non effacés | ~L.3077 | Génère maintenant 8 entrées : canaux 1–7 avec role=0 (DISABLED) + canal 0 avec role=1, name="", psk="01" |
-| `clear_channels` : ancien nom conservé | ~L.3077 | name="" → l'appareil utilise son nom par défaut ("LongFast") |
-| `clear_channels` : "role":"PRIMARY" (string) | ~L.3077 | Remplacé par `"role": 1` (int) |
-| `_modem_labels()` : retournait repr(tuple) | ~L.814 | Labels formatés comme `_modem_label_from_int` |
-| `_role/region/modem_label_from_int` : pas de gestion string enum | ~L.820–860 | Fallback sur comparaison de nom string (ex: "ROUTER") pour compatibilité protobuf futur |
-
-### Bugs ouverts et leur emplacement précis dans le code
-
-> Les bugs E, F, G, H, I, J, K (session 30/05) sont **résolus** — voir le tableau « Session 30/05 — résumé ».
-> Restent ouverts les 4 bugs d'origine ci-dessous (A, B, C, D).
-
-#### Bug A — NBFM_Config.json non créé en anglais (priorité haute)
-**Fichier** : `NBFM_20260530_1402.py`, lignes ~1000–1020 (`save_lang`) et ~1630 (`NBFMApp.__init__`)  
-**Problème** : `save_lang()` n'est appelé que quand l'utilisateur change de langue via les boutons FR/EN. Si l'utilisateur reste en anglais (langue par défaut), le fichier n'est jamais créé, empêchant toute persistance future de préférences.  
-**Correction** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement.
-
-#### Bug B — Dossier de travail non persisté (priorité haute)
-**Fichier** : `NBFM_20260530_1402.py`, ligne ~1630 (`self.work_dir = APP_DIR`)  
-**Problème** : à chaque lancement, `work_dir` est réinitialisé au dossier du script. L'utilisateur doit resélectionner son dossier de sauvegarde à chaque fois.  
-**Correction** : lire `work_dir` depuis `NBFM_Config.json` au démarrage, sauvegarder à chaque changement via `choose_work_dir()`.
-
-#### Bug C — Suppression des known_nodes non fonctionnelle sur l'appareil (priorité haute)
-**Fichier** : `NBFM_20260530_1402.py`, popup `edit_config_fields`, option `clear_known_nodes_var`  
-**Problème signalé** : cocher "supprimer les nœuds connus" dans l'éditeur supprime la clé du fichier JSON mais **ne nettoie pas la base de nœuds sur l'appareil** lors du push. La fonction `import_full_config` n'a aucun code pour effacer les known_nodes sur le device.  
-**Piste de correction** : l'API Meshtastic Python expose probablement une méthode pour supprimer des nœuds individuellement ou vider la node DB. À rechercher dans `meshtastic.node` / `iface.nodesByNum`. Probablement via `iface.localNode.remove_position_from_node_db()` ou en itérant `iface.nodes` et appelant `local_node.removeNode()` pour chaque entrée présente dans le fichier mais désirée supprimée.
+Tous les bugs historiques sont **résolus** : A, B (persistance langue/dossier), C (suppression known_nodes),
+E (LoRa no-op / protobuf 7.x), F (bruit `statusmessage`), G (clé session admin / transaction), H/I (enums →
+tableau + ordre canaux), J (PSK effaçable), K (noms canaux en double), L (PSK base64 vs hex). **Seul Bug D
+reste ouvert** (basse priorité, neutralisé) :
 
 #### Bug D — `statusmessage` non inscriptible (priorité basse — neutralisé, plus bloquant)
 **État (mis à jour 30/05)** : le proto `moduleConfig.statusmessage` EXISTE désormais (protobuf récent), mais
@@ -232,12 +180,9 @@ pip install meshtastic pyserial protobuf
 
 ```
 Nodes-Backup-Fleet-Manager/
-├── NBFM_20260530_1402.py     ← script principal actif (~3200 lignes)
-├── NBFM_20260528_1135.py     ← version précédente (référence)
-├── NBFM_20260527_1612.py     ← version ancienne (référence)
-├── NBFM_20260520_1318.py     ← version ancienne (référence)
-├── Backup/
-│   └── NBFMV1_78.py          ← backup avant renommage (30/05/2026)
+├── NBFM_20260531_0001.py     ← script principal actif (~3460 lignes) — voir « Script actif » pour le nom exact
+├── Backup/                   ← versions horodatées précédentes (protocole de versioning)
+├── RELEASE_NOTES.md          ← notes de version GitHub (bilingue)
 ├── README.md                 ← documentation bilingue FR/EN
 ├── CONTRIBUTING.md           ← guide de contribution
 ├── LICENCE                   ← CC BY-NC-SA 4.0
@@ -245,8 +190,11 @@ Nodes-Backup-Fleet-Manager/
 └── ...
 ```
 
+> ⚠ Le nom du script actif change à chaque session (versioning horodaté). Se fier à la section
+> « Script actif » en tête de ce fichier, pas au nom figé ci-dessus.
+
 **Fichiers générés à l'exécution** (jamais commités) :
-- `NBFM_Config.json` — persistance langue (fr/en), dans le dossier du script/EXE
+- `NBFM_Config.json` — persistance langue (fr/en) **et** dernier dossier de travail (`work_dir`), dans le dossier du script/EXE. Le port COM n'y est PAS stocké.
 - `NBFM_notes.json` — notes personnelles par fichier NBFM, dans le dossier de travail
 - `*.NBFM` — fichiers de sauvegarde (JSON), dans le dossier de travail choisi par l'utilisateur
 - `NBFM_report_YYYYMMDD_HHMMSS.html` — rapports HTML
@@ -262,25 +210,23 @@ Le `short_name` contient les 4 derniers hex de l'adresse MAC du nœud (`JMC_5F7B
 
 ## 4. Workflow d'exécution
 
+> Remplacer `NBFM_<actif>.py` par le nom du script actif (voir « Script actif »).
+
 ### Lancer depuis le source
 ```bash
-python NBFM_20260530_1402.py
+python NBFM_<actif>.py
 ```
 
 ### Compiler en EXE (PyInstaller)
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name "NBFM" NBFM_20260530_1402.py
+pyinstaller --onefile --windowed --name "NBFM" NBFM_<actif>.py
 # EXE généré dans dist/NBFM.exe
 ```
 Le code gère les deux modes via `get_app_dir()` : `sys.frozen` pour l'EXE, `__file__` pour le source.
 
 ### Convention de nommage des nouveaux scripts
-**Toujours utiliser le format `YYYYMMDD_HHMM` à la place de toute numérotation de version.**
-```
-# Ancien : NBFMV1_78.py
-# Nouveau : NBFM_20260528_1135.py
-```
+**Toujours utiliser le format `NBFM_YYYYMMDD_HHMM.py`** (jamais de numéro de version type `V1_78`).
 
 ---
 
@@ -321,9 +267,9 @@ Le fichier de référence utilise l'extension `.nbfm` (minuscules). Le code rech
 
 ### Organisation actuelle — fichier unique
 
-Le script actif `NBFM_20260530_1850.py` contient tout le code (~3310 lignes).
+Le script actif (voir « Script actif » pour le nom horodaté exact) contient tout le code (~3460 lignes).
 Sections principales dans l'ordre (⚠ numéros de ligne **approximatifs** — ils dérivent à chaque édition ;
-se fier aux noms de fonctions, pas aux numéros) :
+**se fier aux noms de fonctions, pas aux numéros**) :
 
 | Lignes | Contenu |
 |---|---|
@@ -336,7 +282,7 @@ se fier aux noms de fonctions, pas aux numéros) :
 | ~750–775 | Validation : `validate_config_integrity` |
 | ~782–880 | Mappings LoRa/modem : `LORA_REGIONS`, `MODEM_PRESETS`, helpers de conversion |
 | ~883–985 | Lecture métadonnées : `read_file_meta` |
-| ~990–1030 | Persistance : `load_lang`, `save_lang`, `load_notes`, `save_notes` |
+| persistance | `load_lang`/`save_lang`, `load_work_dir`/`save_work_dir`, `load_notes`/`save_notes` |
 | ~1036–1610 | Chaînes UI : `UI_STRINGS` (FR + EN), `tr()` |
 | ~1618–3185 | Classe `NBFMApp` (UI Tkinter complète) |
 | ~3190–3200 | Point d'entrée : `main()` |
@@ -480,21 +426,15 @@ Avant toute modification d'une fonction existante :
 
 ## 10. Roadmap / TODO
 
-### Priorité haute — PROCHAINE ACTION
-- [ ] **Barre de progression pour la restauration** (demandé 30/05). `import_full_config` fait ~33 écritures
-  espacées de 0,5 s (≈15-20 s). Ajouter une progressbar (ttk.Progressbar) alimentée depuis le thread d'import
-  via `root.after()`. Idée : `import_full_config` accepte un callback `progress(done, total, label)` appelé après
-  chaque section/module/canal ; l'UI met à jour la barre. Total = owner + nb sections + nb modules + nb canaux + commit.
-- [ ] **Bug C — Suppression known_nodes sur l'appareil** : `clear_known_nodes_var` supprime la clé du JSON mais ne nettoie pas la node DB sur l'appareil lors du push. Rechercher la méthode Meshtastic Python pour effacer les nœuds connus (probablement via `iface.nodes` + appel de suppression individuel).
-- [ ] **Bug A — `NBFM_Config.json` créé quelle que soit la langue** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement. Le port COM **ne doit pas** être persisté.
-- [ ] **Bug B — Persistance du dossier de travail** dans `NBFM_Config.json` (perdu à chaque lancement). Lire au démarrage, sauvegarder à chaque `choose_work_dir()`.
-- [ ] **Documenter la commande PyInstaller** dans le README (commande exacte + options `--icon`, `--add-data`)
+> Tous les bugs (A, B, C, E–L) + la barre de progression + la validation PSK sont **faits** — voir
+> « Travaux récents » en tête. Ci-dessous, uniquement les pistes ouvertes (aucune urgente). La liste
+> priorisée pour rappel utilisateur est dans « ★ Pistes d'évolution proposées » en tête de fichier.
 
 ### Priorité moyenne
-- [ ] **Support YAML natif** : le glob inclut `*.yaml/*.yml` mais `import_full_config` ne gère que JSON
 - [ ] **Rapport CSV** : format CSV en plus du HTML (plus facile à filtrer dans Excel)
-- [ ] **Validation PSK** : avertir si la PSK saisie en Base64 n'a pas la bonne longueur (16 ou 32 octets)
-- [ ] **Firmware dans la bulle de survol** : afficher la version firmware (champ `metadata`) dans le tooltip — pas de colonne supplémentaire dans le Treeview.
+- [ ] **Support YAML natif** : le glob inclut `*.yaml/*.yml` mais `import_full_config` ne gère que JSON
+- [ ] **Firmware dans la bulle de survol** : afficher la version firmware (`metadata`) — pas de colonne supplémentaire
+- [ ] **Documenter la commande PyInstaller** dans le README (commande exacte + `--icon`, `--windowed`)
 
 ### Priorité basse
 - [ ] **Icône application** pour l'EXE PyInstaller
