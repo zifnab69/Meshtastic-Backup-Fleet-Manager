@@ -19,60 +19,141 @@
 
 ---
 
-## État du projet — mai 2026 (lire en premier)
+## État du projet — 30 mai 2026 (lire en premier)
+
+### ▶ POUR REPRENDRE LA PROCHAINE FOIS
+
+- **Fichier de travail actif** : `NBFM_20260530_1850.py`. Compile OK. Fonctionnel sur matériel réel.
+- **Dernier état** : restauration vérifiée OK (lora appliqué, canaux dans le bon ordre, owner correct, modifs prises en compte). Tableau de la liste complet (modèle/rôle/région/modem). Plus de message d'erreur bloquant.
+- **PROCHAINE ACTION prévue** : implémenter la **barre de progression de la restauration** (voir Roadmap §10, priorité haute — piste d'implémentation détaillée).
+- **Avant toute modif** : appliquer le protocole de versioning (timestamp FR → copie dans `Backup/` → renommer en `NBFM_YYYYMMDD_HHMM.py` → modifier → `py_compile`).
+- **Environnement critique à ne pas oublier** : **protobuf 7.34.1 / Python 3.14** (voir pièges ci-dessous). Toujours tester en intégration avec un faux nœud + vrais protos `localonly_pb2`/`channel_pb2`.
+
+### Script actif
+
+`NBFM_20260530_1850.py` (~3310 lignes, fichier unique).  
+Backups (les plus récents) : `Backup/NBFM_20260530_1823.py`, `1754.py`, `1749.py`, `1703.py`, `1621.py`, `1402.py`.  
+Versions de référence antérieures : `NBFM_20260528_1135.py`, `NBFM_20260527_1612.py`, `NBFM_20260520_1318.py`.
+
+### Session 30/05/2026 — résumé (lire en premier)
+
+> Longue session de debug autour d'un symptôme : « la restauration ne change rien sur l'appareil ».
+> Plusieurs fausses pistes avant la vraie cause racine. Résumé condensé ci-dessous ; détails par bug
+> dans la section « Bugs ouverts/résolus ».
+
+**La cause racine (Bug E réel)** : l'environnement tourne sous **protobuf 7.34.1 / Python 3.14**, qui a
+supprimé/renommé deux API utilisées par NBFM :
+1. `MessageToDict(including_default_value_fields=True)` → renommé `always_print_fields_with_no_presence`.
+   L'ancien levait `TypeError` → `proto_to_dict` tombait dans un fallback qui sérialisait les champs
+   `repeated` via `str()` → `lora.ignore_incoming = '[]'` (chaîne au lieu de liste).
+2. `FieldDescriptor.label` → supprimé en upb (AttributeError). `_coerce_repeated_fields` l'utilisait →
+   no-op silencieux → le `'[]'` n'était jamais réparé.
+   
+   Combinés : `ParseDict` échouait sur toute la section `lora` → fallback → **modifs LoRa perdues en silence**.
+
+**Fix racine (1749/1823)** : `proto_to_dict` (~L.159) appelle MessageToDict avec
+`always_print_fields_with_no_presence=True` **et** `use_integers_for_enums=True` (enums en int, pas en
+noms — sinon casse le tableau et la restauration des canaux, cf. H/I). Helpers de tolérance :
+`_field_is_repeated()` (is_repeated/label), `_coerce_repeated_fields()` (`'[]'`→`[]`),
+`_channel_role_to_int()` ("PRIMARY"→1), `_enum_short_label()` (read_file_meta tolère int OU nom).
+
+**Ce qui a été corrigé cette session** (tous vérifiés par tests d'intégration avec faux nœud + vrais protos) :
+
+| Bug | Sujet | Fix |
+|---|---|---|
+| **E** | LoRa no-op (cause racine protobuf 7.x) | proto_to_dict + coerce + `use_integers_for_enums` |
+| **F** | `Error: No valid config with name statusmessage` (shell) | `_write_config_quiet()` redirige stdout (~L.574) |
+| **G** | Restauration no-op via clé de session admin périmée | transaction `begin/commitSettingsTransaction` + `time.sleep(0.5)` après chaque écriture (~L.724). **NB : G n'était PAS le vrai symptôme utilisateur (c'était E), mais c'est une vraie amélioration alignée sur le CLI officiel — conservée.** |
+| **H** | Tableau : modèle/rôle/région/modem = « ? » | `use_integers_for_enums` + `_enum_short_label()` |
+| **I** | Décalage des canaux + canal 0 fantôme `AQ==` | `use_integers_for_enums` + `_channel_role_to_int()` |
+| **J** | Éditeur : PSK non effaçable | champ vide → `psk=""` (~L.3245) |
+| **K** | Validation noms de canaux identiques | refus de sauvegarde si doublon |
+| — | `SystemExit` (our_exit) tuait le thread d'import | `except SystemExit` dans `_apply_section/module` |
+| — | `short_name` pollué par suffixe MAC → corrompu à l'import | découplage : MAC dérivée de `my_info.my_node_num` |
+| — | `re` non importé (régression interne) → owner non restauré | `re` remonté au niveau module (~L.31) |
+| — | override_duty_cycle (demande) | case à cocher dans l'éditeur (~L.3061) |
+
+**Pièges/leçons retenus** :
+- **protobuf 7.x (upb)** : ne JAMAIS supposer l'API descriptor. Utiliser `field.is_repeated` (pas `.label`).
+  MessageToDict : `always_print_fields_with_no_presence` + `use_integers_for_enums` impératifs.
+- **`our_exit()` de la lib Meshtastic → `sys.exit()` → `SystemExit`** (hérite de BaseException). `except
+  Exception` ne l'attrape PAS. Tout appel lib peut tuer le thread silencieusement.
+- **Clé de session admin rotative** (firmware + admin_key/PKI) : encadrer les écritures par une transaction
+  et espacer (0,5 s) pour laisser la clé se rafraîchir.
+- **TOUJOURS tester en intégration** avec faux nœud + vrais protos `localonly_pb2`/`channel_pb2` sous le
+  protobuf réellement installé. Les tests unitaires isolés masquent les régressions (cf. `re` non importé).
+- **Auto-reboot** : le device redémarre seul à la fin du download. Le message « redémarrez l'appareil »
+  est conservé volontairement (inoffensif, rassure l'utilisateur). Pas de changement.
+- **Canal par défaut = nom VIDE** (vérifié dans la lib) : l'identité d'un canal = `generate_channel_hash(name, psk)`.
+  Le primaire standard a `name=""` (l'app affiche le nom du preset, ex « LongFast ») et `psk=0x01`/`AQ==`
+  (= clé par défaut, cf. `util.py:68 bytes([1])`). **Le nommer « default » changerait le hash → incompatibilité.**
+  Donc `clear_channels` garde `name=""` : c'est correct, NE PAS mettre « default ».
 
 ### Ce que fait le logiciel en l'état actuel — ce qui fonctionne
 
 L'application est **fonctionnelle et utilisée sur matériel réel** (T-Echo, Heltec V3).
-Script actif : `NBFM_20260528_1135.py` (sur disque : `NBFMV1_78.py`, ~3100 lignes, fichier unique).
 
 | Fonctionnalité | État |
 |---|---|
 | Export complet d'un nœud → fichier .NBFM | ✅ Fonctionnel |
-| Restauration .NBFM → nœud | ⚠️ Fonctionnel mais incomplet (voir bugs) |
+| Restauration .NBFM → nœud | ✅ Fonctionnel (corrigé en profondeur le 30/05 — lora, canaux, owner, transaction) |
+| Case override_duty_cycle dans l'éditeur | ✅ Ajouté session 30/05 |
 | Génération profil flotte | ✅ Fonctionnel |
-| Éditeur champs clés (owner, LoRa, canaux, PSK) | ✅ Fonctionnel |
+| Éditeur champs clés (owner, LoRa, canaux, PSK, rôle) | ✅ Fonctionnel |
+| "Supprimer tous les canaux" dans l'éditeur | ✅ Corrigé session 30/05 |
+| Import exhaustif local_config + modules | ✅ Corrigé session 30/05 |
 | Export/import multi-nœuds séquentiels | ✅ Fonctionnel |
 | Groupement par MAC dans la liste des fichiers | ✅ Fonctionnel |
-| Tooltip au survol (nom long, région, canal 2, nœuds connus) | ✅ Fonctionnel |
+| Tooltip au survol (nom long, région, canal, nœuds connus) | ✅ Fonctionnel |
 | UI bilingue FR/EN commutable sans redémarrage | ✅ Fonctionnel |
 | Rapport HTML exportable | ✅ Fonctionnel |
 | Validation d'intégrité avant restauration | ✅ Fonctionnel |
 | Générateur de clés PSK (AES-128 / AES-256) | ✅ Fonctionnel |
 | Compilation EXE via PyInstaller | ✅ Fonctionnel |
 
-### Bugs connus et leur emplacement précis dans le code
+### Corrections apportées — session 30/05/2026
 
-#### Bug 1 — Import non exhaustif des modules (priorité haute)
-**Fichier** : `NBFMV1_78.py`, lignes ~580–587  
-**Problème** : liste blanche codée en dur — 4 modules présents sur matériel réel (T-Echo) ne sont **jamais restaurés** :
-```python
-# Code actuel — liste fixe, incomplète
-for section in ["mqtt", "serial", "external_notification", "store_forward",
-                "range_test", "telemetry", "canned_message",
-                "neighbor_info", "ambient_lighting", "detection_sensor", "paxcounter"]:
-```
-Modules manquants : `statusmessage`, `traffic_management`, `audio`, `remote_hardware`.  
-**Correction attendue** : remplacer par une boucle `for section, data in module_cfg.items()` qui itère sur toutes les clés du JSON, inconnues incluses.
+Toutes les corrections ci-dessous sont dans `NBFM_20260530_1402.py`.
 
-#### Bug 2 — Import non exhaustif de local_config (priorité haute)
-**Fichier** : `NBFMV1_78.py`, ligne ~574  
-**Problème** : même principe — liste fixe de 8 sections, si le firmware ajoute une section elle sera ignorée :
-```python
-# Code actuel — liste fixe
-for section in ["device", "position", "power", "network", "display", "lora", "bluetooth", "security"]:
-```
-**Correction attendue** : itérer sur `local_cfg.keys()`, avec traitement spécial de `security` (déjà géré) et exclusion de `version` (compteur interne).
+| Correction | Localisation | Détail |
+|---|---|---|
+| `_apply_section_to_node` : Clear()+fallback dangereux | ~L.530 | Sauvegarde proto avant Clear() via CopyFrom ; restauration si ParseDict échoue. Avant : le fallback écrivait un proto à zéros sur l'appareil (role=0, tzdef="", etc.) |
+| `_apply_module_section` : même bug | ~L.590 | Même correction + ImportError séparé du except général |
+| `_coerce_repeated_fields()` | ~L.495 | Nouvelle fonction. Convertit les valeurs scalaires (`0`) en liste vide (`[]`) pour les champs `repeated` protobuf avant ParseDict. Corrige l'erreur "lora fallback, parsedict échoué: repeated field ignore_incoming must be in []" |
+| Import exhaustif local_config (ex-Bug 2) | ~L.633 | Itération dynamique sur `local_cfg.items()` au lieu d'une liste fixe de 8 sections |
+| Import exhaustif modules (ex-Bug 1) | ~L.643 | Itération dynamique sur `module_cfg.items()` ; couvre désormais `audio`, `remote_hardware`, `traffic_management` et tout futur module firmware |
+| `clear_channels` : canaux 1–7 non effacés | ~L.3077 | Génère maintenant 8 entrées : canaux 1–7 avec role=0 (DISABLED) + canal 0 avec role=1, name="", psk="01" |
+| `clear_channels` : ancien nom conservé | ~L.3077 | name="" → l'appareil utilise son nom par défaut ("LongFast") |
+| `clear_channels` : "role":"PRIMARY" (string) | ~L.3077 | Remplacé par `"role": 1` (int) |
+| `_modem_labels()` : retournait repr(tuple) | ~L.814 | Labels formatés comme `_modem_label_from_int` |
+| `_role/region/modem_label_from_int` : pas de gestion string enum | ~L.820–860 | Fallback sur comparaison de nom string (ex: "ROUTER") pour compatibilité protobuf futur |
 
-#### Bug 3 — NBFM_Config.json non créé en anglais
-**Fichier** : `NBFMV1_78.py`, lignes ~952–965 (`save_lang`) et `~1578` (`NBFMApp.__init__`)  
+### Bugs ouverts et leur emplacement précis dans le code
+
+> Les bugs E, F, G, H, I, J, K (session 30/05) sont **résolus** — voir le tableau « Session 30/05 — résumé ».
+> Restent ouverts les 4 bugs d'origine ci-dessous (A, B, C, D).
+
+#### Bug A — NBFM_Config.json non créé en anglais (priorité haute)
+**Fichier** : `NBFM_20260530_1402.py`, lignes ~1000–1020 (`save_lang`) et ~1630 (`NBFMApp.__init__`)  
 **Problème** : `save_lang()` n'est appelé que quand l'utilisateur change de langue via les boutons FR/EN. Si l'utilisateur reste en anglais (langue par défaut), le fichier n'est jamais créé, empêchant toute persistance future de préférences.  
-**Correction attendue** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement.
+**Correction** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement.
 
-#### Bug 4 — Dossier de travail non persisté
-**Fichier** : `NBFMV1_78.py`, ligne ~1573 (`self.work_dir = APP_DIR`)  
+#### Bug B — Dossier de travail non persisté (priorité haute)
+**Fichier** : `NBFM_20260530_1402.py`, ligne ~1630 (`self.work_dir = APP_DIR`)  
 **Problème** : à chaque lancement, `work_dir` est réinitialisé au dossier du script. L'utilisateur doit resélectionner son dossier de sauvegarde à chaque fois.  
-**Correction attendue** : lire `work_dir` depuis `NBFM_Config.json` au démarrage, sauvegarder à chaque changement via `choose_work_dir()`.
+**Correction** : lire `work_dir` depuis `NBFM_Config.json` au démarrage, sauvegarder à chaque changement via `choose_work_dir()`.
+
+#### Bug C — Suppression des known_nodes non fonctionnelle sur l'appareil (priorité haute)
+**Fichier** : `NBFM_20260530_1402.py`, popup `edit_config_fields`, option `clear_known_nodes_var`  
+**Problème signalé** : cocher "supprimer les nœuds connus" dans l'éditeur supprime la clé du fichier JSON mais **ne nettoie pas la base de nœuds sur l'appareil** lors du push. La fonction `import_full_config` n'a aucun code pour effacer les known_nodes sur le device.  
+**Piste de correction** : l'API Meshtastic Python expose probablement une méthode pour supprimer des nœuds individuellement ou vider la node DB. À rechercher dans `meshtastic.node` / `iface.nodesByNum`. Probablement via `iface.localNode.remove_position_from_node_db()` ou en itérant `iface.nodes` et appelant `local_node.removeNode()` pour chaque entrée présente dans le fichier mais désirée supprimée.
+
+#### Bug D — `statusmessage` non inscriptible (priorité basse — neutralisé, plus bloquant)
+**État (mis à jour 30/05)** : le proto `moduleConfig.statusmessage` EXISTE désormais (protobuf récent), mais
+`writeConfig` de la lib ne le gère pas → `our_exit()` → SystemExit. C'est attrapé (`_apply_module_section`)
+et le `print` parasite est avalé (`_write_config_quiet`). Donc **plus de crash ni de bruit shell** ; le module
+est simplement ignoré (ligne `⚠` dans le popup). Reste théoriquement non restaurable via l'API Python standard.
+**À investiguer un jour** : voie alternative pour écrire `statusmessage` (peut-être un module interne non exposé).
 
 ### Règles non négociables pour toute modification
 
@@ -151,25 +232,18 @@ pip install meshtastic pyserial protobuf
 
 ```
 Nodes-Backup-Fleet-Manager/
-├── NBFM_20260528_1135.py     ← script principal actif (~3100 lignes) [ex NBFMV1_78]
-├── NBFM_20260527_1612.py     ← version précédente (référence)        [ex NBFMV1_77]
-├── NBFM_20260520_1318.py     ← version ancienne (référence)          [ex NBFMV1.75]
+├── NBFM_20260530_1402.py     ← script principal actif (~3200 lignes)
+├── NBFM_20260528_1135.py     ← version précédente (référence)
+├── NBFM_20260527_1612.py     ← version ancienne (référence)
+├── NBFM_20260520_1318.py     ← version ancienne (référence)
+├── Backup/
+│   └── NBFMV1_78.py          ← backup avant renommage (30/05/2026)
 ├── README.md                 ← documentation bilingue FR/EN
 ├── CONTRIBUTING.md           ← guide de contribution
 ├── LICENCE                   ← CC BY-NC-SA 4.0
 ├── Images/                   ← screenshots pour le README
-│   ├── CM_Firstpannel 1.77.jpg
-│   ├── CM_vueprincipale 1.7.7.jpg
-│   └── ...
-├── ADC.jpg                   ← screenshots racine (legacy)
-├── CM_Firstpannel.jpg
-└── CM_vueprincipale1.jpg
+└── ...
 ```
-
-> **Note sur les noms de fichiers** : les anciens scripts portaient un numéro de version
-> (`NBFMV1_78`, `NBFMV1_77`, `NBFMV1.75`). La convention adoptée à partir de mai 2026
-> est `NBFM_YYYYMMDD_HHMM.py`. Les fichiers sur disque peuvent encore avoir l'ancien nom ;
-> tout nouveau fichier créé doit respecter la nouvelle convention.
 
 **Fichiers générés à l'exécution** (jamais commités) :
 - `NBFM_Config.json` — persistance langue (fr/en), dans le dossier du script/EXE
@@ -190,13 +264,13 @@ Le `short_name` contient les 4 derniers hex de l'adresse MAC du nœud (`JMC_5F7B
 
 ### Lancer depuis le source
 ```bash
-python NBFM_20260528_1135.py
+python NBFM_20260530_1402.py
 ```
 
 ### Compiler en EXE (PyInstaller)
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name "NBFM" NBFM_20260528_1135.py
+pyinstaller --onefile --windowed --name "NBFM" NBFM_20260530_1402.py
 # EXE généré dans dist/NBFM.exe
 ```
 Le code gère les deux modes via `get_app_dir()` : `sys.frozen` pour l'EXE, `__file__` pour le source.
@@ -233,16 +307,9 @@ Le code gère les deux modes via `get_app_dir()` : `sys.frozen` pour l'EXE, `__f
 | `known_nodes` | Dict keyed par `!hex_node_id` (ex : `"!1666a7f9"`) — **pas une liste** |
 | `known_nodes[id].user.publicKey` | Base64 — correspond aux valeurs de `security.admin_key` pour les nœuds de confiance |
 
-### Modules présents dans ce fichier mais absents de la liste d'import actuelle
+### Modules présents dans ce fichier
 
-Le code import (`import_full_config`) ne traite pas ces modules qui existent pourtant sur du matériel réel :
-
-| Module | Présent dans le fichier | Traité par l'import |
-|---|---|---|
-| `statusmessage` | ✓ | ✗ — manquant |
-| `traffic_management` | ✓ | ✗ — manquant |
-| `audio` | ✓ | ✗ — manquant |
-| `remote_hardware` | ✓ | ✗ — manquant |
+Depuis la session 30/05/2026, `import_full_config` itère sur **tous** les modules présents dans le JSON (itération dynamique). Les modules `traffic_management`, `audio`, `remote_hardware` sont désormais restaurés. `statusmessage` est présent dans le fichier mais non exposé par l'API `writeConfig` — il est tenté silencieusement et ignoré si introuvable (voir Bug D).
 
 ### Extension de fichier
 Le fichier de référence utilise l'extension `.nbfm` (minuscules). Le code recherche `*.NBFM` (majuscules). Sous Windows le filesystem est insensible à la casse — ça fonctionne. Sur Linux ce serait cassé. À garder en tête si portabilité Linux envisagée.
@@ -254,23 +321,25 @@ Le fichier de référence utilise l'extension `.nbfm` (minuscules). Le code rech
 
 ### Organisation actuelle — fichier unique
 
-Le script actif `NBFM_20260528_1135.py` contient tout le code (~3100 lignes).
-Sections principales dans l'ordre :
+Le script actif `NBFM_20260530_1850.py` contient tout le code (~3310 lignes).
+Sections principales dans l'ordre (⚠ numéros de ligne **approximatifs** — ils dérivent à chaque édition ;
+se fier aux noms de fonctions, pas aux numéros) :
 
 | Lignes | Contenu |
 |---|---|
 | ~37–109 | Utilitaires, `_ToolTip`, `check_dependencies`, `get_app_dir`, `list_serial_ports` |
 | ~115–135 | Connexion : `connect_device` |
 | ~142–447 | Export : `proto_to_dict`, clés de sécurité, `export_full_config` |
-| ~454–488 | Profil flotte : `build_fleet_profile` |
-| ~495–697 | Import : `_apply_section_to_node`, `_apply_module_section`, `import_full_config` |
-| ~709–733 | Validation : `validate_config_integrity` |
-| ~740–834 | Mappings LoRa/modem : `LORA_REGIONS`, `MODEM_PRESETS`, helpers de conversion |
-| ~837–937 | Lecture métadonnées : `read_file_meta` |
-| ~943–983 | Persistance : `load_lang`, `save_lang`, `load_notes`, `save_notes` |
-| ~989–1558 | Chaînes UI : `UI_STRINGS` (FR + EN), `tr()` |
-| ~1566–3105 | Classe `NBFMApp` (UI Tkinter complète) |
-| ~3111–3119 | Point d'entrée : `main()` |
+| ~454–490 | Profil flotte : `build_fleet_profile` |
+| ~495–510 | **`_coerce_repeated_fields()`** — normalise les champs repeated pour ParseDict |
+| ~512–740 | Import : `_apply_section_to_node`, `_apply_module_section`, `import_full_config` |
+| ~750–775 | Validation : `validate_config_integrity` |
+| ~782–880 | Mappings LoRa/modem : `LORA_REGIONS`, `MODEM_PRESETS`, helpers de conversion |
+| ~883–985 | Lecture métadonnées : `read_file_meta` |
+| ~990–1030 | Persistance : `load_lang`, `save_lang`, `load_notes`, `save_notes` |
+| ~1036–1610 | Chaînes UI : `UI_STRINGS` (FR + EN), `tr()` |
+| ~1618–3185 | Classe `NBFMApp` (UI Tkinter complète) |
+| ~3190–3200 | Point d'entrée : `main()` |
 
 ### Découpage en modules — approche recommandée si le code grossit
 
@@ -311,9 +380,11 @@ ou place-le dans la structure ci-dessus selon son rôle.
 - `_apply_security_to_node()` — restaure admin_key via `del[:] + append()` (méthode CLI officielle Meshtastic)
 
 **Import**
-- `_apply_section_to_node()` — `Clear()` + `ParseDict()` sur le protobuf avant `writeConfig`
-- `import_full_config(iface, config)` — owner, 8 sections local_config, 11 modules, canaux
-- **Ordre critique des canaux** : secondaires (role=2) d'abord, primaire (role=1) en dernier → évite le reset firmware
+- `_coerce_repeated_fields(section_data, proto_obj)` — convertit les scalaires en listes pour les champs `repeated` avant ParseDict (corrige `ignore_incoming: 0` → `[]`)
+- `_apply_section_to_node()` — sauvegarde proto via CopyFrom, `Clear()` + `_coerce_repeated_fields()` + `ParseDict()` + `writeConfig` ; restauration en cas d'échec ParseDict
+- `_apply_module_section()` — idem pour les modules
+- `import_full_config(iface, config)` — owner, **toutes** les sections local_config (itération dynamique), **tous** les modules (itération dynamique), canaux
+- **Ordre des canaux** : secondaires (role=2 ou 0) d'abord, primaire (role=1) en dernier — `writeChannel()` ne provoque PAS de reboot dans les firmwares actuels (confirmé source node.py), mais l'ordre est conservé pour compatibilité descendante
 
 **Profil flotte**
 - `build_fleet_profile(config)` — supprime : my_info, metadata, owner, known_nodes, public_key, private_key, wifi_ssid, wifi_psk, compteurs version ; **conserve** admin_key
@@ -356,6 +427,8 @@ Avant toute modification d'une fonction existante :
 
 ### Protobuf
 - `Clear()` avant `ParseDict()` — garantit l'écrasement total, pas de merge partiel
+- **Sauvegarder l'état proto avant `Clear()`** via `CopyFrom` — si ParseDict échoue, restaurer avant le fallback `writeConfig` (sinon l'appareil reçoit un proto à zéros)
+- **`_coerce_repeated_fields()` obligatoire avant ParseDict** — les champs `repeated` peuvent être stockés en scalaire (`0`) dans d'anciens fichiers NBFM au lieu de liste (`[]`)
 - `admin_key` : `del sec.admin_key[:] + append()` — méthode CLI officielle (pas ParseDict)
 - `ignore_unknown_fields=True` dans ParseDict — compatibilité firmware
 - PSK stockée en **hex** dans le JSON, convertie en **base64** dans l'UI et en **bytes** pour le protobuf
@@ -382,7 +455,7 @@ Avant toute modification d'une fonction existante :
 | Windows uniquement | `os.startfile()`, COM ports style Windows |
 | COM1 exclu | Port système Windows (BIOS/souris), jamais un appareil USB Meshtastic |
 | Redémarrage obligatoire | Après toute restauration, l'appareil doit être redémarré manuellement |
-| Ordre canaux critique | Secondaires (role=2) avant primaire (role=1) — sinon le firmware réinitialise le canal primaire |
+| Ordre canaux | Secondaires (role=2 ou 0) avant primaire (role=1). `writeChannel()` ne provoque PAS de reboot dans les firmwares actuels (confirmé source `node.py` Meshtastic Python). L'ordre est conservé pour compatibilité descendante. |
 | private_key non restaurée dans les profils flotte | Chaque nœud garde ses propres clés cryptographiques |
 | Frozen/non-frozen | `get_app_dir()` doit être utilisé pour tout chemin relatif à l'app |
 | Dossier de travail variable | L'utilisateur peut choisir n'importe quel dossier ; `work_dir` est une variable |
@@ -390,19 +463,38 @@ Avant toute modification d'une fonction existante :
 
 ---
 
-## 9. Roadmap / TODO
+## 9. Notes API Meshtastic Python — faits confirmés
 
-### Priorité haute
-- [ ] **Import exhaustif des modules** : remplacer la liste blanche codée en dur (`mqtt`, `serial`, etc.) par une boucle sur **tous** les modules présents dans le JSON — y compris `statusmessage`, `traffic_management`, `audio`, `remote_hardware` et tout futur module firmware inconnu. Même principe pour `local_config` : itérer sur toutes les clés présentes, pas une liste fixe. C'est une exigence fondamentale (voir Philosophie de conception).
-- [ ] **Persistance du dossier de travail** dans `NBFM_Config.json` (perdu à chaque lancement)
-- [ ] **`NBFM_Config.json` créé quelle que soit la langue** : actuellement le fichier n'est créé que si l'utilisateur choisit le français. Il doit être créé dès le premier lancement (EN ou FR) pour pouvoir stocker la préférence de langue et, à terme, d'autres réglages. Le port COM **ne doit pas** être persisté (il change à chaque appareil branché).
+> Issus de l'analyse du source `node.py` (github.com/meshtastic/python) lors de la session 30/05/2026.
+
+| Point | Détail |
+|---|---|
+| `writeConfig(name)` — sections locales valides | `device`, `position`, `power`, `network`, `display`, `lora`, `bluetooth`, `security` |
+| `writeConfig(name)` — modules valides | `mqtt`, `serial`, `external_notification`, `store_forward`, `range_test`, `telemetry`, `canned_message`, `audio`, `remote_hardware`, `neighbor_info`, `detection_sensor`, `ambient_lighting`, `paxcounter`, `traffic_management` |
+| `writeChannel(index)` | N'entraîne **pas** de reboot dans les firmwares actuels |
+| `setOwner(long_name, short_name)` | Tronque `short_name` à **4 caractères** automatiquement (message d'avertissement dans le terminal — comportement normal, pas un bug NBFM) |
+| `beginSettingsTransaction()` / `commitSettingsTransaction()` | Existent dans l'API. Utiles pour les nœuds distants (mesh). Non utilisés actuellement pour les connexions USB directes. |
+| `statusmessage` | Présent dans les fichiers NBFM du T-Echo mais **absent** de la liste writeConfig officielle. Non accessible via `moduleConfig.statusmessage`. Peut-être un module interne non exposé par l'API Python. |
+
+---
+
+## 10. Roadmap / TODO
+
+### Priorité haute — PROCHAINE ACTION
+- [ ] **Barre de progression pour la restauration** (demandé 30/05). `import_full_config` fait ~33 écritures
+  espacées de 0,5 s (≈15-20 s). Ajouter une progressbar (ttk.Progressbar) alimentée depuis le thread d'import
+  via `root.after()`. Idée : `import_full_config` accepte un callback `progress(done, total, label)` appelé après
+  chaque section/module/canal ; l'UI met à jour la barre. Total = owner + nb sections + nb modules + nb canaux + commit.
+- [ ] **Bug C — Suppression known_nodes sur l'appareil** : `clear_known_nodes_var` supprime la clé du JSON mais ne nettoie pas la node DB sur l'appareil lors du push. Rechercher la méthode Meshtastic Python pour effacer les nœuds connus (probablement via `iface.nodes` + appel de suppression individuel).
+- [ ] **Bug A — `NBFM_Config.json` créé quelle que soit la langue** : appeler `save_lang(self.lang_var.get())` dans `NBFMApp.__init__()` au démarrage, inconditionnellement. Le port COM **ne doit pas** être persisté.
+- [ ] **Bug B — Persistance du dossier de travail** dans `NBFM_Config.json` (perdu à chaque lancement). Lire au démarrage, sauvegarder à chaque `choose_work_dir()`.
 - [ ] **Documenter la commande PyInstaller** dans le README (commande exacte + options `--icon`, `--add-data`)
 
 ### Priorité moyenne
 - [ ] **Support YAML natif** : le glob inclut `*.yaml/*.yml` mais `import_full_config` ne gère que JSON
 - [ ] **Rapport CSV** : format CSV en plus du HTML (plus facile à filtrer dans Excel)
 - [ ] **Validation PSK** : avertir si la PSK saisie en Base64 n'a pas la bonne longueur (16 ou 32 octets)
-- [ ] **Firmware dans la bulle de survol** : afficher la version firmware (champ `metadata`) dans le tooltip au survol de chaque ligne, au même titre que le nombre de nœuds connus (`known_nodes_count`) — ne pas ajouter de colonne supplémentaire dans le Treeview (le tableau ne doit pas s'élargir davantage).
+- [ ] **Firmware dans la bulle de survol** : afficher la version firmware (champ `metadata`) dans le tooltip — pas de colonne supplémentaire dans le Treeview.
 
 ### Priorité basse
 - [ ] **Icône application** pour l'EXE PyInstaller
@@ -410,3 +502,4 @@ Avant toute modification d'une fonction existante :
 - [ ] **Auto-détection port** plus fine : filtrer par VID/PID Silicon Labs (CP210x) ou CH340
 - [ ] **Mode ligne de commande** : export/import sans GUI (pour automatisation)
 - [ ] **Refactoring modulaire** : découper en packages `core/`, `ui/`, `data/` si le code dépasse ~4000 lignes
+- [ ] **Bug D — `statusmessage`** : vérifier si ce module est accessible autrement dans l'API Meshtastic Python

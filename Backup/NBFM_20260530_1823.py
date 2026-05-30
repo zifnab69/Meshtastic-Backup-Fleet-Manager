@@ -28,10 +28,17 @@ Export/Import COMPLET + Profil Flotte (généralisation)
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-import os, sys, threading, json, shutil, copy
+import os, sys, threading, json, shutil, copy, time, re, io, contextlib
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+# Délai entre deux écritures admin successives lors d'une restauration.
+# Sur firmware récent + admin_key/PKI, la clé de session admin tourne à chaque
+# réponse de l'appareil : sans ce délai, l'écriture suivante part avec une clé
+# périmée et est rejetée en silence (Bug G). Valeur alignée sur le CLI officiel
+# Meshtastic (--configure utilise time.sleep(0.5) entre chaque writeConfig).
+_ADMIN_WRITE_DELAY = 0.5
 
 
 class _ToolTip:
@@ -150,16 +157,43 @@ def proto_to_dict(obj) -> Any:
         except Exception:
             pass
     if hasattr(obj, "DESCRIPTOR"):
-        try:
-            from google.protobuf.json_format import MessageToDict
-            return MessageToDict(obj, preserving_proto_field_name=True,
-                                 including_default_value_fields=True)
-        except Exception:
-            result = {}
-            for field in obj.DESCRIPTOR.fields:
-                try: result[field.name] = proto_to_dict(getattr(obj, field.name))
-                except Exception: result[field.name] = None
-            return result
+        from google.protobuf.json_format import MessageToDict
+        # protobuf a renommé `including_default_value_fields` →
+        # `always_print_fields_with_no_presence` (supprimé en protobuf 5+/7+).
+        # Sans l'argument correct, MessageToDict lève TypeError → on tombait dans
+        # le fallback manuel qui sérialisait les champs `repeated` via str() en
+        # chaîne ('[]') au lieu de liste ([]), cassant l'import (ex: lora.ignore_incoming).
+        #
+        # `use_integers_for_enums=True` : IMPÉRATIF. Par défaut MessageToDict sérialise
+        # les enums en NOMS de chaînes ("PRIMARY", "ROUTER", "EU_868"), ce qui cassait
+        # (a) l'affichage du tableau (read_file_meta fait int()) et (b) la restauration
+        # des canaux (`role in (1,2)` → tous DISABLED → décalage). En forçant les int,
+        # les enums restent des nombres comme avant, compatibles avec tous les consommateurs.
+        # On essaie les variantes par ordre de préférence, sinon fallback manuel.
+        for kwargs in (
+            {"preserving_proto_field_name": True, "always_print_fields_with_no_presence": True, "use_integers_for_enums": True},
+            {"preserving_proto_field_name": True, "including_default_value_fields": True, "use_integers_for_enums": True},
+            {"preserving_proto_field_name": True, "use_integers_for_enums": True},
+            {"preserving_proto_field_name": True},
+        ):
+            try:
+                return MessageToDict(obj, **kwargs)
+            except TypeError:
+                continue          # argument non supporté par cette version protobuf
+            except Exception:
+                break             # autre erreur → fallback manuel
+        # Fallback manuel — sérialise explicitement les `repeated` en liste
+        result = {}
+        for field in obj.DESCRIPTOR.fields:
+            try:
+                val = getattr(obj, field.name)
+                if _field_is_repeated(field):
+                    result[field.name] = [proto_to_dict(x) for x in val]
+                else:
+                    result[field.name] = proto_to_dict(val)
+            except Exception:
+                result[field.name] = None
+        return result
     if hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes)):
         try: return [proto_to_dict(item) for item in obj]
         except Exception: pass
@@ -363,15 +397,12 @@ def export_full_config(iface) -> Dict[str, Any]:
             except Exception:
                 pass
 
-        # ── short_name : ajouter suffixe 4 derniers hex de l'ID nœud ──────
-        # Format Meshtastic réel : "JMC_5F7B" (partie user + "_" + 4 hex MAC)
-        if owner_info["short_name"] and node_id_hex:
-            try:
-                hex_part = node_id_hex.lstrip("!").upper()[-4:]   # "5F7B"
-                sn_base  = owner_info["short_name"].split("_")[0]  # sans suffixe existant
-                owner_info["short_name"] = f"{sn_base}_{hex_part}"
-            except Exception:
-                pass
+        # ── short_name : conservé TEL QUEL (vrai nom court de l'appareil) ──
+        # NE PAS y injecter le suffixe MAC : ce champ est réécrit à l'import via
+        # setOwner(), qui tronque à 4 caractères. Y mettre "MC_1680" corromprait
+        # le nom court en "MC_1" au round-trip. Le suffixe MAC (4 hex de
+        # my_info.my_node_num) est ajouté UNIQUEMENT au nom de fichier et au
+        # groupement de la liste, jamais dans owner.short_name.
 
         # ── hw_model : convertir int enum → nom lisible ────────────────────
         if owner_info["hw_model"] in ("", "0", "UNSET", 0):
@@ -492,6 +523,74 @@ def build_fleet_profile(config: dict) -> dict:
 # IMPORT
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _field_is_repeated(field) -> bool:
+    """True si le champ protobuf est `repeated`, compatible toutes versions.
+
+    protobuf 5+/7+ (upb) expose `field.is_repeated` mais a SUPPRIMÉ `field.label`
+    (accès → AttributeError). Les versions antérieures n'ont que `field.label`.
+    On essaie d'abord la nouvelle API, puis l'ancienne en repli."""
+    ir = getattr(field, "is_repeated", None)
+    if ir is not None:
+        return bool(ir)
+    try:
+        from google.protobuf.descriptor import FieldDescriptor
+        return field.label == FieldDescriptor.LABEL_REPEATED
+    except Exception:
+        return False
+
+
+def _coerce_repeated_fields(section_data: dict, proto_obj) -> dict:
+    """Normalise en liste toute valeur non-liste d'un champ repeated protobuf, avant ParseDict.
+
+    Indispensable car d'anciens exports NBFM ont sérialisé les champs repeated via
+    str(container) : un champ vide devient la CHAÎNE '[]' (et non la liste []), et
+    une valeur unique devient '[5]'. Sans normalisation, ParseDict échoue sur toute
+    la section (ex : lora → toute la section lora perdue, région/modem inclus).
+
+    Règles :
+      - liste            → inchangée
+      - '[]' / '' / '0'  → []
+      - '[1,2]' (str)    → liste JSON parsée
+      - scalaire 0/None  → []
+      - autre scalaire   → [valeur]
+    """
+    try:
+        result = dict(section_data)
+        for field in proto_obj.DESCRIPTOR.fields:
+            if (_field_is_repeated(field)
+                    and field.name in result
+                    and not isinstance(result[field.name], list)):
+                v = result[field.name]
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s in ("", "[]", "{}", "0"):
+                        result[field.name] = []
+                    else:
+                        try:
+                            parsed = json.loads(s)
+                            result[field.name] = parsed if isinstance(parsed, list) else [parsed]
+                        except Exception:
+                            result[field.name] = [v]
+                else:
+                    result[field.name] = [] if not v else [v]
+        return result
+    except Exception:
+        return section_data
+
+
+def _write_config_quiet(local_node, name: str) -> None:
+    """Appelle writeConfig en avalant le print() résiduel de la lib Meshtastic.
+
+    Pour une section/module présent dans le firmware mais absent de la liste
+    writeConfig (ex: statusmessage), la lib fait `print("Error: No valid config
+    with name ...")` PUIS `sys.exit()` (our_exit). Le SystemExit est géré par les
+    appelants ; ici on redirige stdout pour que ce print parasite ne pollue pas la
+    console du script. redirect_stdout restaure stdout même si SystemExit est levé.
+    On n'attrape rien : SystemExit / Exception remontent normalement à l'appelant."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        local_node.writeConfig(name)
+
+
 def _apply_section_to_node(local_node, section_name: str, section_data: dict) -> str:
     """
     Merge les valeurs JSON dans l'objet protobuf du nœud pour une section donnée,
@@ -528,9 +627,22 @@ def _apply_section_to_node(local_node, section_name: str, section_data: dict) ->
         # Clear() AVANT ParseDict : garantit que les champs absents du JSON
         # ne conservent pas leur ancienne valeur sur la machine cible
         proto_obj.Clear()
-        ParseDict(section_data, proto_obj, ignore_unknown_fields=True)
+        # Normaliser les champs repeated (0 → []) avant ParseDict
+        # pour éviter l'erreur "repeated field X must be in []" (ex: ignore_incoming)
+        data_to_parse = _coerce_repeated_fields(section_data, proto_obj)
+        ParseDict(data_to_parse, proto_obj, ignore_unknown_fields=True)
         local_node.writeConfig(section_name)
         return f"✓ [{section_name}]"
+    except SystemExit:
+        # writeConfig() a appelé our_exit() → sys.exit() (SystemExit, hors Exception).
+        # Section présente dans le firmware mais inconnue de la lib Meshtastic.
+        # On restaure et on signale sans laisser le SystemExit tuer le thread d'import.
+        if saved is not None:
+            try:
+                proto_obj.CopyFrom(saved)
+            except Exception:
+                pass
+        return f"⚠ [{section_name}] non inscriptible via l'API Meshtastic (ignoré)"
     except Exception as e:
         # ParseDict a échoué après Clear() — restaurer l'état précédent
         # pour éviter d'écraser l'appareil avec un proto vide (tous les champs à 0)
@@ -542,6 +654,8 @@ def _apply_section_to_node(local_node, section_name: str, section_data: dict) ->
         try:
             local_node.writeConfig(section_name)
             return f"✓ [{section_name}] (fallback, ParseDict échoué: {e})"
+        except SystemExit:
+            return f"⚠ [{section_name}] non inscriptible via l'API Meshtastic (ignoré)"
         except Exception as e2:
             return f"✗ [{section_name}]: {e2}"
 
@@ -572,9 +686,22 @@ def _apply_module_section(local_node, section_name: str, section_data: dict) -> 
     try:
         # Clear() avant ParseDict : écrasement total, pas de merge partiel
         proto_obj.Clear()
-        ParseDict(section_data, proto_obj, ignore_unknown_fields=True)
-        local_node.writeConfig(section_name)
+        data_to_parse = _coerce_repeated_fields(section_data, proto_obj)
+        ParseDict(data_to_parse, proto_obj, ignore_unknown_fields=True)
+        _write_config_quiet(local_node, section_name)
         return f"✓ module [{section_name}]"
+    except SystemExit:
+        # writeConfig() a appelé our_exit() → sys.exit() (lève SystemExit, qui
+        # n'est PAS un Exception). Cas typique : un module présent dans le firmware
+        # (ex. statusmessage) mais absent de la liste writeConfig de la lib Meshtastic.
+        # Sans ce catch, le SystemExit remonte et TUE le thread d'import en silence.
+        # On restaure le proto d'origine et on signale sans interrompre l'import.
+        if saved is not None:
+            try:
+                proto_obj.CopyFrom(saved)
+            except Exception:
+                pass
+        return f"⚠ module [{section_name}] non inscriptible via l'API Meshtastic (ignoré)"
     except Exception:
         if saved is not None:
             try:
@@ -582,45 +709,100 @@ def _apply_module_section(local_node, section_name: str, section_data: dict) -> 
             except Exception:
                 pass
         try:
-            local_node.writeConfig(section_name)
+            _write_config_quiet(local_node, section_name)
             return f"✓ module [{section_name}] (fallback)"
+        except SystemExit:
+            return f"⚠ module [{section_name}] non inscriptible via l'API Meshtastic (ignoré)"
         except Exception:
             return None
+
+
+_CHANNEL_ROLE_NAMES = {"DISABLED": 0, "PRIMARY": 1, "SECONDARY": 2}
+
+def _channel_role_to_int(role_val) -> int:
+    """Normalise un rôle de canal en entier (0/1/2), quel que soit le format du fichier.
+
+    Selon la version d'export, `role` peut être un int (1) ou un nom d'enum protobuf
+    ("PRIMARY"). Sans normalisation, le test `role in (1,2)` échoue sur les chaînes →
+    tous les canaux passent en DISABLED → décalage des canaux à la restauration (Bug I)."""
+    if isinstance(role_val, bool):
+        return 0
+    if isinstance(role_val, int):
+        return role_val if role_val in (0, 1, 2) else 0
+    if isinstance(role_val, str):
+        return _CHANNEL_ROLE_NAMES.get(role_val.strip().upper(), 0)
+    return 0
 
 
 def import_full_config(iface, config: Dict[str, Any]) -> list:
     log = []
     local_node = iface.localNode
 
+    # ── Transaction de réglages (Bug G) ───────────────────────────────────────
+    # Sur firmware récent + admin_key/PKI, les messages admin sont protégés par une
+    # clé de session rotative. Sans transaction ni délai entre écritures, les
+    # writeConfig successifs partent avec une clé périmée et sont rejetés en
+    # silence → restauration no-op (l'appareil garde son ancienne config).
+    # On reproduit le pattern officiel du CLI Meshtastic (--configure) :
+    #   beginSettingsTransaction() → écritures espacées → commitSettingsTransaction()
+    # beginSettingsTransaction() appelle ensureSessionKey() et ouvre la transaction.
+    # Guardé : si la transaction n'est pas supportée, on poursuit en écritures
+    # directes (comportement antérieur préservé — zéro régression).
+    _tx_open = False
+    try:
+        local_node.beginSettingsTransaction()
+        _tx_open = True
+        log.append("✓ Transaction de réglages ouverte")
+    except SystemExit:
+        log.append("⚠ beginSettingsTransaction indisponible — écritures directes")
+    except Exception as e:
+        log.append(f"⚠ beginSettingsTransaction échouée ({e}) — écritures directes")
+
     # ── Owner ──
     try:
         owner = config.get("owner", {})
         ln = owner.get("long_name", "") if isinstance(owner, dict) else ""
         sn = owner.get("short_name", "") if isinstance(owner, dict) else ""
+        # Garde-fou : un short_name Meshtastic fait 4 caractères max. Toute valeur
+        # plus longue est un ancien composite pollué (ex: "MC_1680") — on retire le
+        # suffixe MAC "_XXXX" pour éviter que setOwner tronque en "MC_1" et corrompe
+        # le vrai nom court. (Les fichiers exportés par cette version ne sont plus
+        # pollués ; ce garde-fou protège les fichiers antérieurs.)
+        if isinstance(sn, str) and len(sn) > 4:
+            cleaned = re.sub(r'_[0-9A-Fa-f]{4}$', '', sn)
+            if cleaned != sn:
+                log.append(f"ℹ Owner: suffixe MAC retiré du nom court ('{sn}' → '{cleaned}')")
+                sn = cleaned
         if ln or sn:
             local_node.setOwner(long_name=ln, short_name=sn)
             log.append(f"✓ Owner: '{ln}' / '{sn}'")
+            time.sleep(_ADMIN_WRITE_DELAY)
         else:
             log.append("– Owner: non modifié (profil flotte)")
     except Exception as e:
         log.append(f"✗ Owner: {e}")
 
-    # ── Config locale (injecte les valeurs JSON dans le protobuf AVANT writeConfig) ──
+    # ── Config locale — itère sur toutes les sections présentes dans le JSON ──
+    # "version" est un compteur interne, security a un traitement spécial dans _apply_section_to_node
     local_cfg = config.get("local_config", {})
-    for section in ["device", "position", "power", "network", "display", "lora", "bluetooth", "security"]:
-        if section in local_cfg and local_cfg[section]:
-            msg = _apply_section_to_node(local_node, section, local_cfg[section])
+    for section, section_data in local_cfg.items():
+        if section == "version" or not section_data:
+            continue
+        msg = _apply_section_to_node(local_node, section, section_data)
+        if msg:
             log.append(msg)
+        time.sleep(_ADMIN_WRITE_DELAY)   # laisser la clé de session se rafraîchir (Bug G)
 
-    # ── Modules ──
+    # ── Modules — itère sur tous les modules présents dans le JSON ──
+    # Couvre audio, remote_hardware, traffic_management et tout futur module firmware
     module_cfg = config.get("module_config", {})
-    for section in ["mqtt", "serial", "external_notification", "store_forward",
-                    "range_test", "telemetry", "canned_message",
-                    "neighbor_info", "ambient_lighting", "detection_sensor", "paxcounter"]:
-        if section in module_cfg and module_cfg[section]:
-            msg = _apply_module_section(local_node, section, module_cfg[section])
-            if msg:
-                log.append(msg)
+    for section, section_data in module_cfg.items():
+        if not section_data:
+            continue
+        msg = _apply_module_section(local_node, section, section_data)
+        if msg:
+            log.append(msg)
+        time.sleep(_ADMIN_WRITE_DELAY)   # laisser la clé de session se rafraîchir (Bug G)
 
     # ── Canaux — injection protobuf canal par canal ──────────────────────────
     try:
@@ -653,10 +835,11 @@ def import_full_config(iface, config: Dict[str, Any]) -> list:
     if ch_entries:
         # Trier : écrire d'abord les canaux secondaires (role=2), puis le primaire (role=1)
         # Le canal primaire écrit en dernier évite que le firmware le réinitialise
-        ch_entries_sorted = sorted(ch_entries, key=lambda x: (x[1].get("role", 0) == 1, x[0]))
+        # _channel_role_to_int : accepte int OU nom d'enum ("PRIMARY") — voir Bug I
+        ch_entries_sorted = sorted(ch_entries, key=lambda x: (_channel_role_to_int(x[1].get("role", 0)) == 1, x[0]))
 
         for ch_index, entry in ch_entries_sorted:
-            role_val = entry.get("role", 0)
+            role_val = _channel_role_to_int(entry.get("role", 0))
             settings = entry.get("settings", {}) or {}
             ch_name  = settings.get("name", "")
 
@@ -727,8 +910,20 @@ def import_full_config(iface, config: Dict[str, Any]) -> list:
 
             except Exception as e:
                 log.append(f"✗ Canal {ch_index}: {e}")
+            time.sleep(_ADMIN_WRITE_DELAY)   # laisser la clé de session se rafraîchir (Bug G)
     else:
         log.append("– Canaux: aucun canal dans le fichier")
+
+    # ── Commit de la transaction : applique le lot d'écritures sur l'appareil ──
+    if _tx_open:
+        try:
+            time.sleep(_ADMIN_WRITE_DELAY)
+            local_node.commitSettingsTransaction()
+            log.append("✓ Transaction de réglages validée (commit)")
+        except SystemExit:
+            log.append("⚠ commitSettingsTransaction indisponible")
+        except Exception as e:
+            log.append(f"⚠ commitSettingsTransaction échouée: {e}")
 
     return log
 
@@ -891,6 +1086,32 @@ def _role_label_from_int(val) -> str:
     return roles[0]
 
 
+def _node_mac4(my_node_num) -> str:
+    """4 derniers hex de l'ID nœud (= 4 derniers octets de la MAC).
+    Ex : 861673088 → '335c1680' → '1680'. Source fiable et indépendante du
+    champ owner.short_name. Retourne '' si l'ID est absent/illisible."""
+    try:
+        return f"{int(my_node_num) & 0xFFFFFFFF:08x}"[-4:].upper()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _enum_short_label(val, int_dict, default="?") -> str:
+    """Libellé court pour le tableau à partir d'une valeur d'enum int OU nom de chaîne.
+
+    Le nouvel export (use_integers_for_enums) produit des int → mappés via int_dict.
+    D'anciens fichiers (exportés en 1749-1754) ont des noms d'enum ("ROUTER", "EU_868")
+    → affichés tels quels plutôt que « ? » (read_file_meta faisait int() → ValueError)."""
+    try:
+        i = int(val)
+        return int_dict.get(i, f"#{i}")
+    except (ValueError, TypeError):
+        pass
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return default
+
+
 def read_file_meta(path: Path) -> dict:
     """Lit rapidement les métadonnées clés d'un fichier JSON sans tout parser."""
     try:
@@ -900,6 +1121,8 @@ def read_file_meta(path: Path) -> dict:
         long_name  = owner.get("long_name",  "") if isinstance(owner, dict) else ""
         short_name = owner.get("short_name", "") if isinstance(owner, dict) else ""
         hw_model   = owner.get("hw_model",   "") if isinstance(owner, dict) else ""
+        # 4 hex de MAC depuis my_info (fiable) — sert au groupement par nœud
+        mac4 = _node_mac4((data.get("my_info") or {}).get("my_node_num"))
         profile_type = data.get("_profile_type", "")
         date_raw = data.get("_export_date", data.get("_profile_date", ""))
         date_short = date_raw[:16].replace("T", " ") if date_raw else "?"
@@ -934,19 +1157,13 @@ def read_file_meta(path: Path) -> dict:
             7:"KR",8:"TW",9:"RU",10:"IN",11:"NZ865",12:"TH",13:"UA433",
             14:"UA868",15:"MY433",16:"MY919",17:"SG923",18:"PH",19:"LORA24",
         }
-        try:
-            r_int = int(data.get("local_config", {}).get("lora", {}).get("region", 0))
-            region_label = REGION_LABEL.get(r_int, f"#{r_int}")
-        except Exception:
-            region_label = "?"
+        region_label = _enum_short_label(
+            data.get("local_config", {}).get("lora", {}).get("region", 0), REGION_LABEL)
         # modem preset
-        try:
-            mp_int = int(data.get("local_config", {}).get("lora", {}).get("modem_preset", -1))
-            MODEM_SHORT = {0:"LongFast",1:"LongSlow",2:"VeryLongSlow",3:"MedSlow",
-                           4:"MedFast",5:"ShortSlow",6:"ShortFast",7:"LongMod",8:"ShortTurbo"}
-            modem_label = MODEM_SHORT.get(mp_int, f"#{mp_int}" if mp_int >= 0 else "?")
-        except Exception:
-            modem_label = "?"
+        MODEM_SHORT = {0:"LongFast",1:"LongSlow",2:"VeryLongSlow",3:"MedSlow",
+                       4:"MedFast",5:"ShortSlow",6:"ShortFast",7:"LongMod",8:"ShortTurbo"}
+        modem_label = _enum_short_label(
+            data.get("local_config", {}).get("lora", {}).get("modem_preset", -1), MODEM_SHORT)
         # fréquence (override_frequency prioritaire sur frequency)
         try:
             lora_cfg = data.get("local_config", {}).get("lora", {})
@@ -966,16 +1183,13 @@ def read_file_meta(path: Path) -> dict:
             4:"REPEATER", 5:"TRACKER", 6:"SENSOR", 7:"TAK",
             8:"CLIENT_HIDDEN", 9:"LOST_AND_FOUND", 10:"TAK_TRACKER",
         }
-        try:
-            role_int = int((data.get("local_config", {}) or {})
-                           .get("device", {}).get("role", 0))
-            device_role = ROLE_SHORT.get(role_int, f"#{role_int}")
-        except Exception:
-            device_role = "?"
+        device_role = _enum_short_label(
+            (data.get("local_config", {}) or {}).get("device", {}).get("role", 0), ROLE_SHORT)
         return {
             "tag":               tag,
             "long_name":         long_name  or "?",
             "short_name":        short_name or "",
+            "mac4":              mac4,
             "hw_model":          hw_model   or "?",
             "device_role":       device_role,
             "ch_name":           ch0_name,
@@ -988,7 +1202,7 @@ def read_file_meta(path: Path) -> dict:
             "freq":              freq_label,
         }
     except Exception:
-        return {"tag":"?","long_name":"?","short_name":"","hw_model":"?",
+        return {"tag":"?","long_name":"?","short_name":"","mac4":"","hw_model":"?",
                 "device_role":"?",
                 "ch_name":"?","ch1_name":"?","ch2_name":"?","known_nodes_count":0,
                 "region":"?","date":"?","modem":"?","freq":"?"}
@@ -1231,6 +1445,8 @@ UI_STRINGS = {
         "edit_empty_fields": "Champs vides",
         "edit_long_required": "Le nom long ne peut pas être vide.",
         "edit_short_required": "Le nom court ne peut pas être vide.",
+        "edit_dup_channel_title": "Noms de canaux en double",
+        "edit_dup_channel": "Deux canaux ne peuvent pas porter le même nom : « {name} ».",
         "sel_choose_backup_folder": "Dossier de sauvegarde",
         "sel_save_full_config": "Sauvegarder la config complète",
         "sel_save_fleet_profile": "Enregistrer le profil flotte",
@@ -1518,6 +1734,8 @@ UI_STRINGS = {
         "edit_empty_fields": "Empty fields",
         "edit_long_required": "Long name cannot be empty.",
         "edit_short_required": "Short name cannot be empty.",
+        "edit_dup_channel_title": "Duplicate channel names",
+        "edit_dup_channel": "Two channels cannot have the same name: \"{name}\".",
         "sel_choose_backup_folder": "Backup folder",
         "sel_save_full_config": "Save full configuration",
         "sel_save_fleet_profile": "Save fleet profile",
@@ -2007,13 +2225,18 @@ class NBFMApp:
                 key=lambda p: p.stat().st_mtime, reverse=True
             )
 
-            # ── Groupement par MAC (4 hex extraits du short_name) ───────────
+            # ── Groupement par MAC (4 hex du nœud) ──────────────────────────
             def _mac_key(meta):
+                # 1) Source fiable : my_info.my_node_num (via read_file_meta)
+                m4 = meta.get("mac4", "")
+                if m4:
+                    return m4.upper()
+                # 2) Fallback : suffixe dans le short_name (anciens fichiers)
                 sn = meta.get("short_name", "")
                 m = re.search(r'[_\-]([0-9A-Fa-f]{4})$', sn)
                 if m:
                     return m.group(1).upper()
-                # Essai depuis le nom de fichier
+                # 3) Fallback : 4 hex dans le nom de fichier
                 m2 = re.search(r'[_\-]([0-9A-Fa-f]{4})[_\-]', str(meta.get("_fn", "")))
                 if m2:
                     return m2.group(1).upper()
@@ -2342,11 +2565,14 @@ class NBFMApp:
                 self.root.after(0, lambda: self.set_status(UI_STRINGS[self.lang_var.get()]["status_reading_config"]))
                 config = export_full_config(iface)
 
-                # Nom de fichier suggéré avec short_name (ex: JMC_5F7B)
+                # Nom de fichier : short_name réel + suffixe MAC (ex: MC_1680)
+                # Le suffixe vient de my_info.my_node_num, PAS du champ owner.
                 now      = datetime.now().strftime("%Y%m%d_%H%M%S")
                 owner    = config.get("owner", {}) if isinstance(config.get("owner"), dict) else {}
-                sn_raw   = owner.get("short_name", "") or owner.get("long_name", "")
-                sn_slug  = "".join(c if c.isalnum() or c in "-_" else "_" for c in sn_raw).strip("_")
+                sn_raw   = (owner.get("short_name", "") or owner.get("long_name", "")).split("_")[0]
+                mac4     = _node_mac4((config.get("my_info") or {}).get("my_node_num"))
+                sn_full  = f"{sn_raw}_{mac4}" if (sn_raw and mac4) else sn_raw
+                sn_slug  = "".join(c if c.isalnum() or c in "-_" else "_" for c in sn_full).strip("_")
                 suggest  = f"meshtastic_{sn_slug}_{now}.NBFM" if sn_slug else f"meshtastic_backup_{now}.NBFM"
 
                 def ask_and_save():
@@ -2594,12 +2820,15 @@ class NBFMApp:
                     messagebox.showerror(T["multi_node_connect_error"].format(index=count + 1), str(e))
                 continue
 
-            # Nom suggéré avec short_name (ex: JMC_5F7B)
+            # Nom suggéré : short_name réel + suffixe MAC (ex: MC_1680)
+            # Le suffixe vient de my_info.my_node_num, PAS du champ owner.
             now     = datetime.now().strftime("%Y%m%d_%H%M%S")
             owner   = config.get("owner", {}) if isinstance(config.get("owner"), dict) else {}
-            sn_raw  = owner.get("short_name", "") or owner.get("long_name", "")
+            sn_raw  = (owner.get("short_name", "") or owner.get("long_name", "")).split("_")[0]
             ln_raw  = owner.get("long_name", "") or owner.get("short_name", "")
-            sn_slug = "".join(c if c.isalnum() or c in "-_" else "_" for c in sn_raw).strip("_")
+            mac4    = _node_mac4((config.get("my_info") or {}).get("my_node_num"))
+            sn_full = f"{sn_raw}_{mac4}" if (sn_raw and mac4) else sn_raw
+            sn_slug = "".join(c if c.isalnum() or c in "-_" else "_" for c in sn_full).strip("_")
             suggest = f"meshtastic_{sn_slug}_{now}.NBFM" if sn_slug else f"meshtastic_node{count+1:02d}_{now}.NBFM"
 
             filename = filedialog.asksaveasfilename(
@@ -3012,49 +3241,67 @@ class NBFMApp:
                         messagebox.showwarning(t["edit_empty_fields"], t["edit_short_required"])
                         return
 
+                # Validation : interdire deux noms de canaux identiques (Demande K)
+                _ch_names = [v.get().strip() for v in (vch0, vch1, vch2) if v.get().strip()]
+                _dup = next((n for n in _ch_names if _ch_names.count(n) > 1), None)
+                if _dup:
+                    messagebox.showwarning(t["edit_dup_channel_title"],
+                                           t["edit_dup_channel"].format(name=_dup))
+                    return
+
                 channels = config.get("channels", [])
                 if isinstance(channels, list) and channels:
                     if "settings" not in channels[0] or not isinstance(channels[0]["settings"], dict):
                         channels[0]["settings"] = {}
                     channels[0]["settings"]["name"] = vch0.get().strip()
-                    # PSK canal 0 : convertir Base64 → hex
+                    # PSK canal 0 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
                     psk0_b64 = vch0_key.get().strip()
-                    if psk0_b64:
+                    if not psk0_b64:
+                        channels[0]["settings"]["psk"] = ""   # effacement explicite
+                    else:
                         try:
                             import base64
                             channels[0]["settings"]["psk"] = base64.b64decode(psk0_b64).hex()
                         except Exception:
-                            pass  # Garder la valeur existante si la Base64 est invalide
+                            pass  # Base64 invalide → garder la valeur existante
                     if len(channels) > 1:
                         if "settings" not in channels[1] or not isinstance(channels[1]["settings"], dict):
                             channels[1]["settings"] = {}
                         channels[1]["settings"]["name"] = vch1.get().strip()
-                        # PSK canal 1 : convertir Base64 → hex
+                        # PSK canal 1 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
                         psk1_b64 = vch1_key.get().strip()
-                        if psk1_b64:
+                        if not psk1_b64:
+                            channels[1]["settings"]["psk"] = ""   # effacement explicite
+                        else:
                             try:
                                 import base64
                                 channels[1]["settings"]["psk"] = base64.b64decode(psk1_b64).hex()
                             except Exception:
-                                pass  # Garder la valeur existante si la Base64 est invalide
+                                pass  # Base64 invalide → garder la valeur existante
                     if len(channels) > 2:
                         if "settings" not in channels[2] or not isinstance(channels[2]["settings"], dict):
                             channels[2]["settings"] = {}
                         channels[2]["settings"]["name"] = vch2.get().strip()
+                        # PSK canal 2 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
                         psk2_b64 = vch2_key.get().strip()
-                        if psk2_b64:
+                        if not psk2_b64:
+                            channels[2]["settings"]["psk"] = ""   # effacement explicite
+                        else:
                             try:
                                 import base64
                                 channels[2]["settings"]["psk"] = base64.b64decode(psk2_b64).hex()
                             except Exception:
-                                pass
+                                pass  # Base64 invalide → garder la valeur existante
 
                 if clear_channels_var.get():
-                    config["channels"] = [{
-                        "index": 0,
-                        "role": 1,
-                        "settings": {"name": vch0.get().strip(), "psk": "01"}
-                    }]
+                    # Canal 0 (PRIMARY) en dernier : import_full_config l'écrira après
+                    # les canaux 1-7 (role=DISABLED), conformément à l'API Meshtastic.
+                    # name="" → l'appareil utilise son nom par défaut ("LongFast")
+                    # psk="01" → PSK par défaut Meshtastic (0x01 en hex)
+                    config["channels"] = [
+                        {"index": i, "role": 0, "settings": {"name": "", "psk": ""}}
+                        for i in range(1, 8)
+                    ] + [{"index": 0, "role": 1, "settings": {"name": "", "psk": "01"}}]
 
                 if clear_power_var.get():
                     power = ((config.get("local_config") or {}).get("power"))
