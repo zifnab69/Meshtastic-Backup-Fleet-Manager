@@ -1,0 +1,32 @@
+# Python — bytecode et caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller — artefacts de build EXE
+build/
+dist/
+*.spec
+
+# Fichiers générés à l'exécution par NBFM (jamais à versionner)
+NBFM_Config.json
+NBFM_notes.json
+NBFM_report_*.html
+
+# Sauvegardes de nœuds (données utilisateur, propres à chaque machine)
+*.NBFM
+*.nbfm
+
+# Dossier de versions horodatées du script (local uniquement, non synchronisé)
+Backup/
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Divers IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
