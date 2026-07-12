@@ -6,7 +6,7 @@
 
 ## Table des matières
 
-- [**État du projet — mai 2026 (lire en premier)**](#état-du-projet--mai-2026-lire-en-premier)
+- [**État du projet — 12 juillet 2026 (lire en premier)**](#état-du-projet--12-juillet-2026-lire-en-premier)
 1. [Objectif global](#1-objectif-global)
 2. [Contexte technique](#2-contexte-technique)
 3. [Structure du projet](#3-structure-du-projet)
@@ -20,14 +20,17 @@
 
 ---
 
-## État du projet — 31 mai 2026 (lire en premier)
+## État du projet — 12 juillet 2026 (lire en premier)
 
 ### ▶ POUR REPRENDRE LA PROCHAINE FOIS
 
-- **Fichier de travail actif** : `NBFM_20260531_0001.py` (~3460 lignes, fichier unique). Compile OK. Fonctionnel sur matériel réel (T-Echo, Heltec V3).
+- **Fichier de travail actif** : `NBFM_V1.9.py` (= `NBFM_20260712_1519.py` renommé par l'utilisateur pour le partage ; ~4030 lignes, fichier unique). Compile OK. Fonctionnel sur matériel réel (T-Echo, Heltec V3, **Heltec V4**). Le nommage de travail reste `NBFM_YYYYMMDD_HHMM.py` ; un `NBFM_Vx.y.py` est un renommage manuel pour le partage. **Avant la prochaine modif** : copier `NBFM_V1.9.py` dans `Backup/` puis le renommer en `NBFM_YYYYMMDD_HHMM.py` (protocole de versioning).
 - **État** : application stable. **Aucun bug bloquant.** Tous les bugs A, B, C, E–L sont corrigés et validés. **Seul Bug D reste ouvert** (basse priorité, neutralisé — voir §Bug D).
 - **Avant toute modif** : appliquer le protocole de versioning (timestamp FR → copie dans `Backup/` → renommer en `NBFM_YYYYMMDD_HHMM.py` → modifier → `py_compile`).
 - **Environnement critique** : **protobuf 7.34.1 / Python 3.14** (voir Pièges). Toujours tester en intégration avec un faux nœud + vrais protos `localonly_pb2`/`channel_pb2`.
+- **⚠ Décision d'architecture MODIFIÉE (1519)** : l'ordre d'écriture des canaux est passé de « primaire en DERNIER » à « **primaire en PREMIER** » (aligné sur `setURL` du CLI Meshtastic). Voir §Pièges et §8/§9.
+- **Test GUI possible sans écran** : Tkinter fonctionne en headless dans l'env de dev. On smoke-teste une fenêtre en construisant la méthode avec un faux `self` (attributs `root/lang_var/work_dir/_get_selected_file/refresh_files/set_status/_edit_popup_refresh`), puis `.invoke()` sur les boutons + relecture du fichier produit (a validé l'éditeur en onglets : build + save).
+- **Session 12/07/2026** : injection canaux robuste (ordre + relance), éditeur 2 onglets (canaux activables + précision GPS + ADC multiplier), auto-activation au nom + tassement des canaux, `view_file` éditable, journaux d'import copiables, fix `connect_device`. Tous validés (compile + smoke-tests headless). Commit/renommage effectué par l'utilisateur (GitHub Desktop).
 
 ### ★ Pistes d'évolution proposées (rappel demandé par l'utilisateur)
 
@@ -47,6 +50,12 @@
 
 ### Travaux récents (résumé)
 
+- **Éditeur en onglets + canal « activable » (1519b)** : `edit_config_fields` passé en `ttk.Notebook` 2 onglets. **Onglet Canaux** : les 8 canaux, chacun avec case **« Activé »** (→ `role`=SECONDARY si coché, DISABLED sinon ; canal 0 = PRIMARY verrouillé), nom, PSK, **précision GPS** compacte (`module_settings.position_precision` via `POSITION_PRECISION` NA/23km…/1m), + générateur de clés. **Onglet Principal** : owner/LoRa/rôle + **ADC multiplier** (champ éditable + menu `ADC_DEFAULTS` par appareil ; vide = clé supprimée). **Bug corrigé** : l'ancien éditeur écrivait nom+PSK d'un canal mais JAMAIS son `role` → un canal nommé restait `role=0` (désactivé sur l'appareil). Désormais le save reconstruit les 8 canaux avec le bon rôle. `save_and_close` : rebuild 8 canaux (préserve champs annexes), validation PSK/doublons sur 8 canaux, écriture ADC. Case « Supprimer réglages puissance (ADC) » retirée (doublon).
+- **Auto-activation + tassement des canaux (1519c)** : deux correctifs liés au rôle des canaux. (1) **Auto-cocher « Activé » quand on tape un nom** (`nm_var.trace_add`) — sinon un nom saisi dans une ligne vide restait décoché → `role=0` → canal importé « désactivé » (cause d'un bug remonté : canal « bidule » nommé mais désactivé, PSK en hex = signature de l'éditeur). (2) **Tassement (compaction) au save** façon `deleteChannel` Meshtastic : primaire en 0, secondaires ACTIVÉS packés en 1,2,3… **sans trou**, reste en DISABLED vide. Décocher un canal du milieu ne laisse donc jamais de trou (un trou = canal désactivé au milieu d'actifs = non standard, canaux suivants potentiellement masqués). Validé par smoke-tests headless (build + save → canal nommé ressort role=2 ; trou supprimé ; saisie d'un nom auto-active + packe).
+- **Robustesse injection canaux (1519, Heltec V4 / firmware 2.7.26)** : sur nœud non vierge, un canal secondaire pouvait ne pas être injecté (writeChannel accepté par la lib mais rejeté en silence côté device — clé de session PKI). Trois changements dans `import_full_config` : (1) **ordre canonique** — tri `!= 1` → primaire (index 0) écrit EN PREMIER puis secondaires puis désactivés (avant : primaire en dernier) ; (2) **vérification post-commit** — relecture `requestChannels()` (poll borné 8 s, jamais `waitForConfig` qui a un timeout 300 s) + comparaison via `_channel_applied()` (rôle/nom/PSK) ; (3) **relance directe** hors transaction (une passe) des canaux non appliqués, sinon message « reset usine conseillé ». Registre `_ch_written` = {index: Channel clone} des canaux actifs. Entièrement gardé (zéro régression). Validé par test d'intégration (faux nœud + `channel_pb2`, simulation rejet silencieux).
+- **`view_file` éditable (1519)** : checkbox « ✏ Éditer » → dégrouille le `ScrolledText` + bouton « 💾 Enregistrer » ; validation `json.loads` stricte avant écriture (refus si JSON invalide), copie horodatée dans `Backup/` avant écrasement.
+- **Journal d'import copiable (1519)** : nouveau helper `_show_copyable_log(title, header, log_text, warn)` (Toplevel + `ScrolledText` + bouton « 📋 Copier ») remplace les `messagebox.showinfo` d'import (mono + multi) qui ne permettaient pas le copier-coller.
+- **`connect_device` — code mort corrigé (1519)** : `isConnected` est un `threading.Event` (pas un bool) → l'ancien `not getattr(iface,"isConnected",False)` était toujours faux (attente/timeout jamais exécutés). Remplacé par `ev.wait(8)` (+ repli bool). Le constructeur `SerialInterface` bloquait déjà, donc pas de régression, mais le timeout explicite est désormais réel.
 - **Validation longueur PSK (0001)** : éditeur — `_validate_psk_b64()` dans `save_and_close` bloque la sauvegarde et avertit si une clé Base64 ne décode pas en 1/16/32 octets (avant : longueur non vérifiée → rejet silencieux du firmware).
 - **Persistance langue + dossier (2348, Bugs A/B)** : `save_lang()` au démarrage dans `__init__` (crée `NBFM_Config.json` même en anglais) ; helpers `load_work_dir()`/`save_work_dir()`, lecture au démarrage, persistance dans `choose_work_dir()` + 3 chemins export. **Port COM non persisté.**
 - **Barre de progression restauration (2332)** : `import_full_config(iface, config, progress=cb)` ; callback `progress(done,total,kind,detail)` ; UI `_open_progress(threaded=...)` + `_progress_label()` (mono-nœud=thread+`root.after` ; multi-nœuds=synchrone+`win.update()`).
@@ -55,8 +64,8 @@
 
 ### Script actif
 
-`NBFM_20260531_0001.py` (~3460 lignes, fichier unique).  
-Backups les plus récents dans `Backup/` (du plus récent au plus ancien) : `NBFM_20260530_2348.py`, `2332.py`, `2308.py`, `1850.py`, `1823.py`, `1749.py`, `1402.py`.
+`NBFM_V1.9.py` (= `NBFM_20260712_1519.py` renommé pour partage ; ~4030 lignes, fichier unique).  
+Backup du prédécesseur dans `Backup/` : `NBFM_V1.8.py` (= ancien actif renommé par l'utilisateur pour partage). Anciennes versions numérotées dans `Old release/`.
 
 ### Pièges & leçons techniques durables (À LIRE avant de toucher export/import)
 - **protobuf 7.x (upb)** : ne JAMAIS supposer l'API descriptor. Utiliser `field.is_repeated` (pas `.label`).
@@ -69,6 +78,10 @@ Backups les plus récents dans `Backup/` (du plus récent au plus ancien) : `NBF
   protobuf réellement installé. Les tests unitaires isolés masquent les régressions (cf. `re` non importé).
 - **Auto-reboot** : le device redémarre seul à la fin du download. Le message « redémarrez l'appareil »
   est conservé volontairement (inoffensif, rassure l'utilisateur). Pas de changement.
+- **Reboot après commit ⇒ relecture canaux impossible** : après `commitSettingsTransaction`, l'appareil
+  redémarre souvent → la vérification post-commit (`requestChannels`, poll 8 s) échoue (« vérification auto
+  impossible »). Ce n'est PAS une erreur : les canaux sont écrits ; la vérif/relance auto ne fonctionne que
+  si l'appareil ne reboote pas. Le correctif de fond reste l'ordre canonique (primaire d'abord).
 - **Canal par défaut = nom VIDE** (vérifié dans la lib) : l'identité d'un canal = `generate_channel_hash(name, psk)`.
   Le primaire standard a `name=""` (l'app affiche le nom du preset, ex « LongFast ») et `psk=0x01`/`AQ==`
   (= clé par défaut, cf. `util.py:68 bytes([1])`). **Le nommer « default » changerait le hash → incompatibilité.**
@@ -330,7 +343,7 @@ ou place-le dans la structure ci-dessus selon son rôle.
 - `_apply_section_to_node()` — sauvegarde proto via CopyFrom, `Clear()` + `_coerce_repeated_fields()` + `ParseDict()` + `writeConfig` ; restauration en cas d'échec ParseDict
 - `_apply_module_section()` — idem pour les modules
 - `import_full_config(iface, config)` — owner, **toutes** les sections local_config (itération dynamique), **tous** les modules (itération dynamique), canaux
-- **Ordre des canaux** : secondaires (role=2 ou 0) d'abord, primaire (role=1) en dernier — `writeChannel()` ne provoque PAS de reboot dans les firmwares actuels (confirmé source node.py), mais l'ordre est conservé pour compatibilité descendante
+- **Ordre des canaux (MODIFIÉ 1519)** : **primaire (role=1) EN PREMIER** (index 0), puis secondaires (role=2) par index, puis désactivés (role=0) — tri `_channel_role_to_int(role) != 1, index`. Aligné sur `setURL` du CLI Meshtastic. `writeChannel()` ne provoque PAS de reboot (confirmé source node.py) ; l'ancien ordre « primaire en dernier » (anti-reboot) n'était plus nécessaire et fiabilise mal les secondaires sur firmware récent. Suivi d'une **vérification post-commit + relance** (voir Travaux récents 1519).
 
 **Profil flotte**
 - `build_fleet_profile(config)` — supprime : my_info, metadata, owner, known_nodes, public_key, private_key, wifi_ssid, wifi_psk, compteurs version ; **conserve** admin_key
@@ -339,7 +352,7 @@ ou place-le dans la structure ci-dessus selon son rôle.
 - `_apply_lang()` — mise à jour inline de tous les textes sans reconstruire l'UI
 - `refresh_files()` — recharge la liste, groupe par MAC (4 derniers hex du short_name), tri par mtime
 - `export_config()` — export single node (thread daemon, `root.after()` pour les callbacks UI)
-- `edit_config_fields()` — popup éditeur (owner, LoRa, rôle, 3 canaux + PSK, générateur de clés, nettoyage avancé)
+- `edit_config_fields()` — popup éditeur en **2 onglets** (`ttk.Notebook`) : **Principal** (owner, LoRa, rôle, ADC multiplier via `ADC_DEFAULTS`, nettoyage) et **Canaux** (les 8 canaux : case Activé→rôle, nom, PSK, précision GPS via `POSITION_PRECISION`, générateur de clés). Le save reconstruit les 8 canaux avec le rôle correct (nommer + activer suffit à activer un canal).
 - `export_report()` — génère un rapport HTML et l'ouvre dans le navigateur
 
 ---
@@ -401,7 +414,7 @@ Avant toute modification d'une fonction existante :
 | Windows uniquement | `os.startfile()`, COM ports style Windows |
 | COM1 exclu | Port système Windows (BIOS/souris), jamais un appareil USB Meshtastic |
 | Redémarrage obligatoire | Après toute restauration, l'appareil doit être redémarré manuellement |
-| Ordre canaux | Secondaires (role=2 ou 0) avant primaire (role=1). `writeChannel()` ne provoque PAS de reboot dans les firmwares actuels (confirmé source `node.py` Meshtastic Python). L'ordre est conservé pour compatibilité descendante. |
+| Ordre canaux (MODIFIÉ 1519) | **Primaire (role=1) EN PREMIER**, puis secondaires (role=2) par index, puis désactivés. Aligné sur `setURL`. Puis vérification post-commit (relecture `requestChannels`) + relance directe des canaux non appliqués. `writeChannel()` ne provoque PAS de reboot (source `node.py`). |
 | private_key non restaurée dans les profils flotte | Chaque nœud garde ses propres clés cryptographiques |
 | Frozen/non-frozen | `get_app_dir()` doit être utilisé pour tout chemin relatif à l'app |
 | Dossier de travail variable | L'utilisateur peut choisir n'importe quel dossier ; `work_dir` est une variable |
@@ -417,7 +430,10 @@ Avant toute modification d'une fonction existante :
 |---|---|
 | `writeConfig(name)` — sections locales valides | `device`, `position`, `power`, `network`, `display`, `lora`, `bluetooth`, `security` |
 | `writeConfig(name)` — modules valides | `mqtt`, `serial`, `external_notification`, `store_forward`, `range_test`, `telemetry`, `canned_message`, `audio`, `remote_hardware`, `neighbor_info`, `detection_sensor`, `ambient_lighting`, `paxcounter`, `traffic_management` |
-| `writeChannel(index)` | N'entraîne **pas** de reboot dans les firmwares actuels |
+| `writeChannel(index)` | N'entraîne **pas** de reboot dans les firmwares actuels. `p.set_channel.CopyFrom(self.channels[index])` → écrit l'objet à cet index. |
+| `setURL(url)` (méthode canonique de restauration des canaux) | Le CLI officiel (`--configure`) restaure TOUS les canaux via `setURL` : boucle `i=0..n` → **primaire en premier (i=0)**, secondaires ensuite, écrit **uniquement les canaux actifs** (pas les désactivés), puis `set_config.lora` À LA FIN. NBFM s'aligne sur cet ordre (1519) mais écrit aussi les désactivés pour purger l'ancien état. |
+| `requestChannels()` | **Asynchrone** : met `channels=None` puis repeuple via le thread lecteur (handler `onResponseRequestChannel`). Ne bloque pas seul — utiliser `waitForConfig("channels")` (timeout **300 s** — trop long) ou un poll borné maison (NBFM : 8 s). |
+| `isConnected` | **`threading.Event`**, pas un bool. Tester `iface.isConnected.wait(timeout)` / `.is_set()`, jamais `not iface.isConnected` (toujours faux). |
 | `setOwner(long_name, short_name)` | Tronque `short_name` à **4 caractères** automatiquement (message d'avertissement dans le terminal — comportement normal, pas un bug NBFM) |
 | `beginSettingsTransaction()` / `commitSettingsTransaction()` | Existent dans l'API. Utiles pour les nœuds distants (mesh). Non utilisés actuellement pour les connexions USB directes. |
 | `statusmessage` | Présent dans les fichiers NBFM du T-Echo mais **absent** de la liste writeConfig officielle. Non accessible via `moduleConfig.statusmessage`. Peut-être un module interne non exposé par l'API Python. |

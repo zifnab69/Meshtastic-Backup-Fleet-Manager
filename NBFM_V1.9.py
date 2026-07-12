@@ -130,10 +130,13 @@ def connect_device(port: Optional[str] = None):
     for p in ports_to_try:
         try:
             iface = meshtastic.serial_interface.SerialInterface(devPath=p)
-            waited = 0
-            while not getattr(iface, "isConnected", False) and waited < 8:
-                time.sleep(0.5); waited += 0.5
-            if not getattr(iface, "isConnected", False):
+            # isConnected est un threading.Event dans la lib Meshtastic (PAS un bool).
+            # Le constructeur bloque déjà jusqu'à la connexion, mais on confirme
+            # explicitement avec un timeout de 8 s. (Ancien code : `not <Event>` était
+            # toujours faux → attente/timeout morts. On gère aussi le cas bool au cas où.)
+            ev = getattr(iface, "isConnected", None)
+            connected = ev.wait(8) if isinstance(ev, threading.Event) else bool(ev)
+            if not connected:
                 iface.close()
                 raise Exception(tr("conn_timeout_on_port", port=p))
             return iface
@@ -736,6 +739,66 @@ def _channel_role_to_int(role_val) -> int:
     return 0
 
 
+def _channel_applied(dev_ch, want_ch) -> bool:
+    """True si le canal lu sur l'appareil correspond au canal voulu (rôle, nom, PSK).
+
+    Sert à la vérification post-commit : sur firmware récent + PKI, un writeChannel
+    peut être rejeté en silence (clé de session périmée). On relit l'appareil et on
+    compare pour détecter — puis relancer — les canaux non appliqués.
+
+    En cas de doute (exception de comparaison), retourne True pour ne PAS déclencher
+    de relance sur un faux positif (prudence : ne jamais réécrire à tort)."""
+    try:
+        return (dev_ch.role == want_ch.role
+                and dev_ch.settings.name == want_ch.settings.name
+                and bytes(dev_ch.settings.psk) == bytes(want_ch.settings.psk))
+    except Exception:
+        return True
+
+
+# ── Précision de position par canal (module_settings.position_precision) ──────
+# Correspondance standard Meshtastic : 0 = ne pas partager la position ("NA"),
+# 10-19 = rayon d'imprécision décroissant, 32 = position précise ("1m").
+POSITION_PRECISION = [
+    ("NA", 0), ("23km", 10), ("12km", 11), ("5.8km", 12), ("2.9km", 13),
+    ("1.5km", 14), ("700m", 15), ("350m", 16), ("200m", 17), ("90m", 18),
+    ("50m", 19), ("1m", 32),
+]
+_POS_PREC_LABELS = [lbl for lbl, _ in POSITION_PRECISION]
+
+def _pos_prec_to_label(v) -> str:
+    """Valeur position_precision → libellé compact (NA/23km/…/1m). NA par défaut."""
+    try:
+        vi = int(v)
+    except (TypeError, ValueError):
+        return "NA"
+    for lbl, n in POSITION_PRECISION:
+        if n == vi:
+            return lbl
+    return "NA"
+
+def _pos_prec_from_label(lbl: str) -> int:
+    """Libellé compact → valeur position_precision. 0 (NA) par défaut."""
+    for l, n in POSITION_PRECISION:
+        if l == lbl:
+            return n
+    return 0
+
+
+# ── Valeurs ADC multiplier par défaut selon l'appareil (aide au remplissage) ──
+# Source : documentation firmware Meshtastic (adc_multiplier_override).
+ADC_DEFAULTS = [
+    ("chatter2", "5.0"), ("diy", "1.85"), ("esp32-s3-pico", "3.1"),
+    ("heltec_v1 & v2", "3.2"), ("heltec_v3 / wsl_v3", "5.1205"),
+    ("heltec_v4", "5.1205"), ("heltec_wireless_paper", "2"),
+    ("heltec_wireless_tracker", "5.1205"), ("heltec_T114", "4.916"),
+    ("m5stack_coreink", "5"), ("nano-g1-explorer", "2"), ("nano-g2-ultra", "2"),
+    ("picomputer-s3", "3.1"), ("rak4631", "1.73"), ("rpipico(w)", "3.1"),
+    ("station-g1", "6.45"), ("tlora_v2_1_16", "2"), ("tlora_v2_1_18", "2.11"),
+    ("tlora_t3s3_v1", "2.11"), ("t-deck", "2.11"), ("t-echo", "2"),
+]
+
+
 def _psk_str_to_bytes(psk_str: str) -> bytes:
     """Décode une PSK de canal stockée en hex OU en base64.
 
@@ -919,11 +982,15 @@ def import_full_config(iface, config: Dict[str, Any], progress=None) -> list:
                 if idx_val is not None:
                     ch_entries.append((int(idx_val), entry))
 
+    _ch_written = {}   # {index: Channel} des canaux ACTIFS écrits — pour vérif/relance
     if ch_entries:
-        # Trier : écrire d'abord les canaux secondaires (role=2), puis le primaire (role=1)
-        # Le canal primaire écrit en dernier évite que le firmware le réinitialise
+        # Ordre canonique (aligné sur setURL du CLI Meshtastic) : PRIMAIRE d'abord
+        # (index 0), puis secondaires par index, puis désactivés. Sur firmware récent
+        # (ex. 2.7.x), écrire le primaire en premier fiabilise l'application des
+        # secondaires. writeChannel() ne provoque PAS de reboot (source node.py) :
+        # l'ancien ordre « primaire en dernier » (anti-reboot) n'est plus nécessaire.
         # _channel_role_to_int : accepte int OU nom d'enum ("PRIMARY") — voir Bug I
-        ch_entries_sorted = sorted(ch_entries, key=lambda x: (_channel_role_to_int(x[1].get("role", 0)) == 1, x[0]))
+        ch_entries_sorted = sorted(ch_entries, key=lambda x: (_channel_role_to_int(x[1].get("role", 0)) != 1, x[0]))
 
         for ch_index, entry in ch_entries_sorted:
             role_val = _channel_role_to_int(entry.get("role", 0))
@@ -973,6 +1040,13 @@ def import_full_config(iface, config: Dict[str, Any], progress=None) -> list:
                     local_node.channels[ch_index] = ch_obj
                     local_node.writeChannel(ch_index)
 
+                    # Mémoriser les canaux ACTIFS pour la vérification post-commit
+                    # (clone : local_node.channels sera réécrit par requestChannels())
+                    if role_val in (1, 2):
+                        _clone = channel_pb2.Channel()
+                        _clone.CopyFrom(ch_obj)
+                        _ch_written[ch_index] = _clone
+
                     psk_info = f"{len(ch_obj.settings.psk)}o" if ch_obj.settings.psk else "vide"
                     status = "DISABLED" if role_val == 0 else f"'{ch_name}'"
                     log.append(f"✓ Canal {ch_index} {status} PSK={psk_info}")
@@ -1013,6 +1087,59 @@ def import_full_config(iface, config: Dict[str, Any], progress=None) -> list:
         except Exception as e:
             log.append(f"⚠ commitSettingsTransaction échouée: {e}")
     _tick("commit")
+
+    # ── Vérification + relance ciblée des canaux (robustesse anti-rejet silencieux) ──
+    # Sur firmware récent + admin_key/PKI, un writeChannel peut être accepté par la
+    # lib (log ✓) mais rejeté en silence par le device (clé de session périmée). On
+    # relit l'état réel après commit et on réécrit UNE fois — en écritures directes
+    # hors transaction (chaque writeChannel rafraîchit la clé) — les canaux actifs non
+    # appliqués. Entièrement gardé : toute erreur/timeout ⇒ on restaure l'état lu et on
+    # signale « non confirmé », sans jamais dégrader le comportement antérieur.
+    if channel_pb2 and _ch_written:
+        try:
+            saved_ch = list(local_node.channels) if local_node.channels else None
+
+            def _reread_channels(timeout_s=8.0):
+                """Re-télécharge les canaux (borné). requestChannels() est asynchrone :
+                on sonde local_node.channels jusqu'à repopulation ou expiration."""
+                local_node.requestChannels()
+                _dl = time.time() + timeout_s
+                while time.time() < _dl and local_node.channels is None:
+                    time.sleep(0.2)
+                return local_node.channels is not None
+
+            if not _reread_channels():
+                if saved_ch is not None:
+                    local_node.channels = saved_ch      # ne pas laisser channels=None
+                log.append("ℹ Canaux écrits — vérification auto impossible (l'appareil "
+                           "redémarre après enregistrement). Vérifiez les canaux sur l'appareil.")
+            else:
+                missing = [ci for ci, want in _ch_written.items()
+                           if not _channel_applied(local_node.getChannelByChannelIndex(ci), want)]
+                if not missing:
+                    log.append("✓ Canaux actifs confirmés sur l'appareil")
+                else:
+                    log.append(f"⚠ Canaux non appliqués {sorted(missing)} — relance directe…")
+                    for ci in missing:
+                        try:
+                            local_node.channels[ci] = _ch_written[ci]
+                            local_node.ensureSessionKey()   # forcer une clé valide
+                            local_node.writeChannel(ci)
+                            time.sleep(_ADMIN_WRITE_DELAY)
+                        except Exception as e_rw:
+                            log.append(f"✗ Relance canal {ci} : {e_rw}")
+                    if _reread_channels():
+                        still = [ci for ci in missing
+                                 if not _channel_applied(local_node.getChannelByChannelIndex(ci), _ch_written[ci])]
+                        if still:
+                            log.append(f"✗ Canaux toujours absents {sorted(still)} — "
+                                       "reset usine du nœud puis réimport conseillé")
+                        else:
+                            log.append("✓ Canaux confirmés après relance")
+                    else:
+                        log.append("⚠ Re-vérification impossible après relance")
+        except Exception as e:
+            log.append(f"⚠ Vérification canaux impossible ({e})")
 
     return log
 
@@ -1579,6 +1706,18 @@ UI_STRINGS = {
         "edit_psk_hint": "Clés en Base64 — format identique à l'application Meshtastic",
         "edit_gen_key": "🎲 Générer clé",
         "edit_gen_key_size": "Taille :",
+        "edit_tab_main": "Principal",
+        "edit_tab_channels": "Canaux",
+        "edit_adc": "ADC multiplier",
+        "edit_adc_value": "Valeur (éditable)",
+        "edit_adc_preset": "Préréglage par appareil…",
+        "edit_adc_hint": "Champ vide = supprime l'override (valeur d'usine).",
+        "edit_ch_col_act": "Act.",
+        "edit_ch_col_chan": "Canal",
+        "edit_ch_col_name": "Nom",
+        "edit_ch_col_psk": "PSK (Base64)",
+        "edit_ch_col_gps": "GPS",
+        "edit_ch_legend": "« Act. » = activé (coché si le canal a un nom). Canal 0 = primaire (verrouillé). GPS : NA = position non partagée, 1m = précise.",
         "edit_cleanup": "Nettoyage avancé",
         "edit_clear_channels": "Supprimer tous les channels ; garder uniquement Canal 0 par défaut",
         "edit_clear_power": "Supprimer le paramètre ADC",
@@ -1650,6 +1789,14 @@ UI_STRINGS = {
         "popup_fleet_created_text": "Fichier créé:\n{dest}\n\nÉléments supprimés (uniques à l'appareil source):\n  ✗ my_info (ID, device_id, firmware)\n  ✗ metadata\n  ✗ owner (nom de l'appareil)\n  ✗ known_nodes (nœuds du mesh)\n  ✗ security.public_key + private_key\n  ✗ network.wifi_ssid + wifi_psk\n  ✗ Compteurs version internes\n\nÉléments conservés (applicables à la flotte):\n  ✓ security.admin_key\n  ✓ Config LoRa (LONG_FAST, fréquence, région…)\n  ✓ Canaux (HellDogs, BackHell avec PSK)\n  ✓ Config Bluetooth, display, position, power\n  ✓ Tous les modules",
         "popup_view_title": "Contenu — {filename}",
         "popup_close": "✖ Fermer",
+        "log_copy_btn": "📋 Copier le journal",
+        "log_copied": "Journal copié dans le presse-papiers.",
+        "view_edit_chk": "✏ Éditer",
+        "view_save_btn": "💾 Enregistrer",
+        "view_saved": "Fichier enregistré : {filename}",
+        "view_invalid_json": "JSON invalide — enregistrement annulé :\n{err}",
+        "view_save_confirm_title": "Enregistrer les modifications ?",
+        "view_save_confirm_text": "Écraser {filename} avec le contenu édité ?\nUne copie horodatée est d'abord placée dans Backup/.",
         "popup_copy_error_title": "Erreur copie",
         "deps_missing_title": "Dépendances manquantes",
         "deps_missing_text": "Installez: pip install meshtastic pyserial Manquant: {missing}",
@@ -1902,6 +2049,18 @@ UI_STRINGS = {
         "edit_psk_hint": "Keys in Base64 — same format as the Meshtastic app",
         "edit_gen_key": "🎲 Generate key",
         "edit_gen_key_size": "Size:",
+        "edit_tab_main": "Main",
+        "edit_tab_channels": "Channels",
+        "edit_adc": "ADC multiplier",
+        "edit_adc_value": "Value (editable)",
+        "edit_adc_preset": "Per-device preset…",
+        "edit_adc_hint": "Empty field = remove the override (factory value).",
+        "edit_ch_col_act": "En.",
+        "edit_ch_col_chan": "Channel",
+        "edit_ch_col_name": "Name",
+        "edit_ch_col_psk": "PSK (Base64)",
+        "edit_ch_col_gps": "GPS",
+        "edit_ch_legend": "“En.” = enabled (checked if the channel has a name). Channel 0 = primary (locked). GPS: NA = position not shared, 1m = precise.",
         "edit_cleanup": "Advanced cleanup",
         "edit_clear_channels": "Remove all channels; keep only default Channel 0",
         "edit_clear_power": "Remove the ADC Multiplier Override setting",
@@ -1973,6 +2132,14 @@ UI_STRINGS = {
         "popup_fleet_created_text": "File created:\n{dest}\n\nRemoved items (unique to the source device):\n  ✗ my_info (ID, device_id, firmware)\n  ✗ metadata\n  ✗ owner (device name)\n  ✗ known_nodes (mesh nodes)\n  ✗ security.public_key + private_key\n  ✗ network.wifi_ssid + wifi_psk\n  ✗ Internal version counters\n\nKept items (applicable to the fleet):\n  ✓ security.admin_key\n  ✓ LoRa config (LONG_FAST, frequency, region…)\n  ✓ Channels (HellDogs, BackHell with PSK)\n  ✓ Bluetooth, display, position, power config\n  ✓ All modules",
         "popup_view_title": "Content — {filename}",
         "popup_close": "✖ Close",
+        "log_copy_btn": "📋 Copy log",
+        "log_copied": "Log copied to clipboard.",
+        "view_edit_chk": "✏ Edit",
+        "view_save_btn": "💾 Save",
+        "view_saved": "File saved: {filename}",
+        "view_invalid_json": "Invalid JSON — save cancelled:\n{err}",
+        "view_save_confirm_title": "Save changes?",
+        "view_save_confirm_text": "Overwrite {filename} with the edited content?\nA timestamped copy is placed in Backup/ first.",
         "popup_copy_error_title": "Copy error",
         "deps_missing_title": "Missing dependencies",
         "deps_missing_text": "Install:\npip install meshtastic pyserial\n\nMissing: {missing}",
@@ -2988,9 +3155,11 @@ class NBFMApp:
                 log_lines = import_full_config(iface, config, progress=prog_update)
                 log_text = "\n".join(log_lines)
                 self.root.after(0, lambda: self.set_status(UI_STRINGS[self.lang_var.get()]["status_restored_file"].format(filename=file_path.name)))
-                self.root.after(0, lambda: messagebox.showinfo("Import réussi ✓",
-                    f"Config restaurée:\n{filename}\n\n{log_text}\n\n"
-                    "⚠ Redémarrez l'appareil pour appliquer."))
+                self.root.after(0, lambda: self._show_copyable_log(
+                    "Import réussi ✓",
+                    f"Config restaurée : {file_path.name}",
+                    log_text,
+                    warn="⚠ Redémarrez l'appareil pour appliquer."))
             except Exception as e:
                 err = str(e)
                 self.root.after(0, lambda: self.set_status(UI_STRINGS[self.lang_var.get()]["status_import_failed"]))
@@ -3230,9 +3399,11 @@ class NBFMApp:
                 iface.close()
                 count += 1
                 self.set_status(UI_STRINGS[self.lang_var.get()]["status_node_restored"].format(index=count))
-                messagebox.showinfo(f"Nœud #{count} restauré ✓",
-                    "\n".join(log_lines) +
-                    "\n\n⚠ Redémarrez l'appareil pour appliquer.")
+                self._show_copyable_log(
+                    f"Nœud #{count} restauré ✓",
+                    f"Nœud #{count} — {file_path.name}",
+                    "\n".join(log_lines),
+                    warn="⚠ Redémarrez l'appareil pour appliquer.")
             except Exception as e:
                 errors += 1
                 messagebox.showerror(UI_STRINGS[self.lang_var.get()]["multi_node_error"].format(index=count + 1), str(e))
@@ -3257,9 +3428,9 @@ class NBFMApp:
             messagebox.showerror(T["edit_invalid_file"], str(e))
             return
             
-# Panneau Editer champs clés Taille
+# Panneau « Éditer les champs clés » — 2 onglets (Principal / Canaux)
         win = tk.Toplevel(self.root)
-        win.geometry("520x820")
+        win.geometry("680x760")
         win.resizable(True, True)
         win.grab_set()
 
@@ -3267,8 +3438,13 @@ class NBFMApp:
         header_lbl.pack(anchor="w", padx=12, pady=(10, 2))
         ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=4)
 
-        frm = ttk.Frame(win, padding=10)
-        frm.pack(fill="both", expand=True)
+        nb = ttk.Notebook(win)
+        nb.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        tab_main = ttk.Frame(nb, padding=10)
+        tab_chan = ttk.Frame(nb, padding=10)
+        nb.add(tab_main, text="")
+        nb.add(tab_chan, text="")
+        frm = tab_main                     # l'onglet Principal réutilise la grille existante
         frm.columnconfigure(1, weight=1)
         frm.columnconfigure(2, weight=0)
 
@@ -3351,105 +3527,148 @@ class NBFMApp:
                          _role_label_from_int(device_cfg.get("role", 0)),
                          _device_roles())
 
-        # espaceur entre rôle et Channels
-        ttk.Label(frm).grid(row=10, column=0, pady=2)
+        # ── ADC multiplier (onglet Principal) — champ éditable + préréglages ──
+        ttk.Label(frm).grid(row=10, column=0, pady=2)   # espaceur
 
-        lbl_channels = ttk.Label(frm, font=("Arial", 9, "bold"), foreground="#333")
-        lbl_channels.grid(row=11, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        popup_labels.append((lbl_channels, "edit_channels"))
+        lbl_adc = ttk.Label(frm, font=("Arial", 9, "bold"), foreground="#333")
+        lbl_adc.grid(row=11, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        popup_labels.append((lbl_adc, "edit_adc"))
 
+        power_cfg = lc.get("power", {}) or {}
+        _adc_raw = power_cfg.get("adc_multiplier_override", "")
+        adc_var = tk.StringVar(value=(str(_adc_raw) if _adc_raw not in ("", None, 0, 0.0) else ""))
+        lbl_adc_val = ttk.Label(frm, font=("Arial", 9))
+        lbl_adc_val.grid(row=12, column=0, sticky="w", padx=(0, 10), pady=2)
+        popup_labels.append((lbl_adc_val, "edit_adc_value"))
+        adc_row = ttk.Frame(frm)
+        adc_row.grid(row=12, column=1, columnspan=2, sticky="ew", pady=2)
+        ttk.Entry(adc_row, textvariable=adc_var, width=12).pack(side="left")
+        adc_dev_values = [TT()["edit_adc_preset"]] + [f"{d} → {v}" for d, v in ADC_DEFAULTS]
+        adc_dev_combo = ttk.Combobox(adc_row, values=adc_dev_values, state="readonly", width=28)
+        adc_dev_combo.current(0)
+        adc_dev_combo.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        def _on_adc_dev(_e=None):
+            i = adc_dev_combo.current()
+            if i > 0:
+                adc_var.set(ADC_DEFAULTS[i - 1][1])
+        adc_dev_combo.bind("<<ComboboxSelected>>", _on_adc_dev)
+        lbl_adc_hint = ttk.Label(frm, font=("Arial", 8), foreground="#888")
+        lbl_adc_hint.grid(row=13, column=1, columnspan=2, sticky="w", pady=(0, 2))
+        popup_labels.append((lbl_adc_hint, "edit_adc_hint"))
+
+        # ── Onglet Canaux : 8 canaux (Act./nom/PSK/GPS) + générateur ─────────
         channels = config.get("channels", [])
         def _get_ch_name(idx):
-            if isinstance(channels, list) and len(channels) > idx:
-                ch = channels[idx]
-                if isinstance(ch, dict):
-                    s = ch.get("settings", {})
-                    if isinstance(s, dict):
-                        return s.get("name", "")
+            if isinstance(channels, list) and len(channels) > idx and isinstance(channels[idx], dict):
+                s = channels[idx].get("settings", {})
+                if isinstance(s, dict):
+                    return s.get("name", "")
             return ""
-
         def _get_ch_psk_b64(idx):
-            """Retourne la PSK du canal en Base64 (format Meshtastic), depuis le hex stocké."""
+            """PSK du canal en Base64 (format Meshtastic), depuis le hex stocké."""
             import base64
-            if isinstance(channels, list) and len(channels) > idx:
-                ch = channels[idx]
-                if isinstance(ch, dict):
-                    s = ch.get("settings", {})
-                    if isinstance(s, dict):
-                        psk_hex = s.get("psk", "")
-                        if psk_hex and isinstance(psk_hex, str):
-                            try:
-                                return base64.b64encode(bytes.fromhex(psk_hex)).decode("ascii")
-                            except Exception:
-                                return psk_hex
+            if isinstance(channels, list) and len(channels) > idx and isinstance(channels[idx], dict):
+                s = channels[idx].get("settings", {})
+                if isinstance(s, dict):
+                    psk_hex = s.get("psk", "")
+                    if psk_hex and isinstance(psk_hex, str):
+                        try:
+                            return base64.b64encode(bytes.fromhex(psk_hex)).decode("ascii")
+                        except Exception:
+                            return psk_hex
             return ""
+        def _get_ch_prec(idx):
+            if isinstance(channels, list) and len(channels) > idx and isinstance(channels[idx], dict):
+                ms = (channels[idx].get("settings", {}) or {}).get("module_settings", {}) or {}
+                return ms.get("position_precision", 0)
+            return 0
+        def _get_ch_role(idx):
+            if isinstance(channels, list) and len(channels) > idx and isinstance(channels[idx], dict):
+                return _channel_role_to_int(channels[idx].get("role", 0))
+            return 1 if idx == 0 else 0
 
-        vch0     = mk_label(12,      "edit_ch0",     _get_ch_name(0))
-        vch0_key = mk_label_copy(13, "edit_ch0_key", _get_ch_psk_b64(0))
+        lbl_ch_legend = ttk.Label(tab_chan, font=("Arial", 8), foreground="#888",
+                                  wraplength=630, justify="left")
+        lbl_ch_legend.pack(anchor="w", pady=(0, 6))
+        popup_labels.append((lbl_ch_legend, "edit_ch_legend"))
 
-        # espaceur entre ch0_key et ch1
-        ttk.Label(frm).grid(row=14, column=0, pady=2)
+        ch_table = ttk.Frame(tab_chan)
+        ch_table.pack(fill="x")
+        ch_table.columnconfigure(2, weight=1)   # nom
+        ch_table.columnconfigure(3, weight=2)   # psk
 
-        vch1     = mk_label(15,      "edit_ch1",     _get_ch_name(1))
-        vch1_key = mk_label_copy(16, "edit_ch1_key", _get_ch_psk_b64(1))
+        hdr_act  = ttk.Label(ch_table, font=("Arial", 8, "bold")); hdr_act.grid(row=0, column=0, padx=(0, 4))
+        hdr_chan = ttk.Label(ch_table, font=("Arial", 8, "bold")); hdr_chan.grid(row=0, column=1, padx=(0, 6))
+        hdr_name = ttk.Label(ch_table, font=("Arial", 8, "bold")); hdr_name.grid(row=0, column=2, sticky="w")
+        hdr_psk  = ttk.Label(ch_table, font=("Arial", 8, "bold")); hdr_psk.grid(row=0, column=3, sticky="w", padx=(6, 0))
+        hdr_gps  = ttk.Label(ch_table, font=("Arial", 8, "bold")); hdr_gps.grid(row=0, column=4, padx=(6, 0))
+        popup_labels += [(hdr_act, "edit_ch_col_act"), (hdr_chan, "edit_ch_col_chan"),
+                         (hdr_name, "edit_ch_col_name"), (hdr_psk, "edit_ch_col_psk"),
+                         (hdr_gps, "edit_ch_col_gps")]
 
-        # espaceur entre ch1_key et ch2
-        ttk.Label(frm).grid(row=17, column=0, pady=2)
+        ch_name_vars, ch_psk_vars, ch_enabled_vars, ch_gps_vars = [], [], [], []
+        def _mk_copy(v):
+            return lambda: (win.clipboard_clear(), win.clipboard_append(v.get()))
+        for i in range(8):
+            r = i + 1
+            nm = _get_ch_name(i)
+            en_var = tk.BooleanVar(value=(i == 0) or bool(str(nm).strip()) or (_get_ch_role(i) in (1, 2)))
+            chk = ttk.Checkbutton(ch_table, variable=en_var)
+            if i == 0:
+                chk.configure(state="disabled")     # canal 0 = primaire verrouillé
+            chk.grid(row=r, column=0, padx=(0, 4))
+            ttk.Label(ch_table, text=(f"{i} (P)" if i == 0 else str(i)),
+                      font=("Arial", 9)).grid(row=r, column=1, padx=(0, 6))
+            nm_var = tk.StringVar(value=nm)
+            if i != 0:
+                # Saisir un nom active automatiquement le canal (sinon un canal nommé
+                # dans une ligne vide resterait décoché → role=0 → importé « désactivé »).
+                nm_var.trace_add("write", lambda *_a, _e=en_var, _n=nm_var:
+                                 _e.set(True) if _n.get().strip() else None)
+            ttk.Entry(ch_table, textvariable=nm_var, width=14).grid(row=r, column=2, sticky="ew", pady=1)
+            psk_var = tk.StringVar(value=_get_ch_psk_b64(i))
+            ttk.Entry(ch_table, textvariable=psk_var, font=("Consolas", 8)).grid(row=r, column=3, sticky="ew", padx=(6, 0), pady=1)
+            gps_var = tk.StringVar(value=_pos_prec_to_label(_get_ch_prec(i)))
+            ttk.Combobox(ch_table, textvariable=gps_var, values=_POS_PREC_LABELS,
+                         state="readonly", width=6).grid(row=r, column=4, padx=(6, 0))
+            ttk.Button(ch_table, text=TT()["edit_copy_psk"], width=3,
+                       command=_mk_copy(psk_var)).grid(row=r, column=5, padx=(6, 0))
+            ch_name_vars.append(nm_var); ch_psk_vars.append(psk_var)
+            ch_enabled_vars.append(en_var); ch_gps_vars.append(gps_var)
 
-        vch2     = mk_label(18,      "edit_ch2",     _get_ch_name(2))
-        vch2_key = mk_label_copy(19, "edit_ch2_key", _get_ch_psk_b64(2))
-
-        lbl_psk = ttk.Label(frm, font=("Arial", 8), foreground="#888")
-        lbl_psk.grid(row=20, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        popup_labels.append((lbl_psk, "edit_psk_hint"))
-
-        # ── Générateur de clé unique avec dropdown taille ──────────────────
+        # ── Générateur de clé PSK (dans l'onglet Canaux) ─────────────────────
         def generate_key(nb_bytes: int) -> str:
             import os, base64
             return base64.b64encode(os.urandom(nb_bytes)).decode("ascii")
-
         KEY_SIZES = [("Default", 0), ("128 bits", 16), ("256 bits", 32)]
 
-        gen_outer = ttk.Frame(frm)
-        gen_outer.grid(row=21, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-
-        # Ligne 1 : bouton + label "Taille :" + dropdown
+        ttk.Separator(tab_chan, orient="horizontal").pack(fill="x", pady=8)
+        gen_outer = ttk.Frame(tab_chan)
+        gen_outer.pack(fill="x")
         gen_top = ttk.Frame(gen_outer)
         gen_top.pack(fill="x")
-
         btn_gen = ttk.Button(gen_top)
         btn_gen.pack(side="left", padx=(0, 8))
         popup_buttons.append((btn_gen, "edit_gen_key"))
-
         lbl_size = ttk.Label(gen_top, font=("Arial", 9))
         lbl_size.pack(side="left", padx=(0, 4))
         popup_labels.append((lbl_size, "edit_gen_key_size"))
-
         size_var = tk.StringVar(value=KEY_SIZES[2][0])  # défaut : 256 bits
-        size_combo = ttk.Combobox(gen_top, textvariable=size_var,
-                                  values=[s[0] for s in KEY_SIZES],
-                                  state="readonly", width=10)
-        size_combo.pack(side="left")
-
-        # Ligne 2 : champ résultat (copier/coller) + bouton 📋
+        ttk.Combobox(gen_top, textvariable=size_var, values=[s[0] for s in KEY_SIZES],
+                     state="readonly", width=10).pack(side="left")
         gen_result_var = tk.StringVar(value="")
         gen_result_row = ttk.Frame(gen_outer)
         gen_result_row.pack(fill="x", pady=(4, 0))
-        gen_result_entry = ttk.Entry(gen_result_row, textvariable=gen_result_var, width=46)
+        gen_result_entry = ttk.Entry(gen_result_row, textvariable=gen_result_var)
         gen_result_entry.pack(side="left", fill="x", expand=True)
-        def _copy_gen():
-            win.clipboard_clear()
-            win.clipboard_append(gen_result_var.get())
         ttk.Button(gen_result_row, text=TT()["edit_copy_psk"], width=3,
-                   command=_copy_gen).pack(side="left", padx=(4, 0))
-
+                   command=lambda: (win.clipboard_clear(), win.clipboard_append(gen_result_var.get()))
+                   ).pack(side="left", padx=(4, 0))
         def _do_generate():
             label = size_var.get()
             nb = next((b for lbl, b in KEY_SIZES if lbl == label), 32)
-            key = "AQ==" if nb == 0 else generate_key(nb)
-            gen_result_var.set(key)
+            gen_result_var.set("AQ==" if nb == 0 else generate_key(nb))
             gen_result_entry.selection_range(0, "end")
-
         btn_gen.config(command=_do_generate)
 
         ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=6)
@@ -3462,11 +3681,6 @@ class NBFMApp:
         chk_channels.pack(anchor="w", padx=4, pady=2)
         popup_checks.append((chk_channels, "edit_clear_channels"))
 
-        clear_power_var = tk.BooleanVar(value=False)
-        chk_power = ttk.Checkbutton(frm_cleanup, variable=clear_power_var)
-        chk_power.pack(anchor="w", padx=4, pady=2)
-        popup_checks.append((chk_power, "edit_clear_power"))
-
         clear_known_nodes_var = tk.BooleanVar(value=False)
         chk_known_nodes = ttk.Checkbutton(frm_cleanup, variable=clear_known_nodes_var)
         chk_known_nodes.pack(anchor="w", padx=4, pady=2)
@@ -3476,6 +3690,8 @@ class NBFMApp:
             t = TT()
             win.title(t["edit_title"].format(filename=f.name))
             header_lbl.config(text=t["edit_file"].format(filename=f.name))
+            nb.tab(tab_main, text=t["edit_tab_main"])
+            nb.tab(tab_chan, text=t["edit_tab_channels"])
             frm_cleanup.config(text=t["edit_cleanup"])
 
             for widget, key in popup_labels:
@@ -3515,6 +3731,17 @@ class NBFMApp:
                 device_cfg = lc.get("device", {}) or {}
                 device_cfg["role"] = _role_int_from_label(vrole.get())
                 lc["device"] = device_cfg
+                # ADC multiplier override (champ vide = suppression de la clé → valeur d'usine)
+                power_cfg = lc.get("power", {}) or {}
+                _adc_txt = adc_var.get().strip().replace(",", ".")
+                if _adc_txt:
+                    try:
+                        power_cfg["adc_multiplier_override"] = float(_adc_txt)
+                    except ValueError:
+                        pass  # valeur non numérique : on garde l'ancienne
+                else:
+                    power_cfg.pop("adc_multiplier_override", None)
+                lc["power"] = power_cfg
                 config["local_config"] = lc
 
                 isfleet = config.get("_profile_type", "") == "fleet"
@@ -3527,8 +3754,9 @@ class NBFMApp:
                         messagebox.showwarning(t["edit_empty_fields"], t["edit_short_required"])
                         return
 
-                # Validation : interdire deux noms de canaux identiques (Demande K)
-                _ch_names = [v.get().strip() for v in (vch0, vch1, vch2) if v.get().strip()]
+                # Validation : interdire deux noms de canaux ACTIFS identiques (Demande K)
+                _ch_names = [ch_name_vars[i].get().strip() for i in range(8)
+                             if ch_name_vars[i].get().strip() and (i == 0 or ch_enabled_vars[i].get())]
                 _dup = next((n for n in _ch_names if _ch_names.count(n) > 1), None)
                 if _dup:
                     messagebox.showwarning(t["edit_dup_channel_title"],
@@ -3550,12 +3778,11 @@ class NBFMApp:
                         return True, ""
                     return False, t["edit_psk_bad_len"].format(n=len(raw))
 
-                _chs = config.get("channels", [])
-                if not clear_channels_var.get() and isinstance(_chs, list) and _chs:
-                    for _idx, _kvar in ((0, vch0_key), (1, vch1_key), (2, vch2_key)):
-                        if len(_chs) <= _idx:
-                            continue
-                        _val = _kvar.get().strip()
+                if not clear_channels_var.get():
+                    for _idx in range(8):
+                        if _idx != 0 and not ch_enabled_vars[_idx].get():
+                            continue   # canal désactivé : PSK non appliquée, pas de contrôle
+                        _val = ch_psk_vars[_idx].get().strip()
                         if not _val:
                             continue
                         _ok, _detail = _validate_psk_b64(_val)
@@ -3565,68 +3792,59 @@ class NBFMApp:
                                 t["edit_psk_invalid"].format(channel=_idx, detail=_detail))
                             return
 
-                channels = config.get("channels", [])
-                if isinstance(channels, list) and channels:
-                    if "settings" not in channels[0] or not isinstance(channels[0]["settings"], dict):
-                        channels[0]["settings"] = {}
-                    channels[0]["settings"]["name"] = vch0.get().strip()
-                    # PSK canal 0 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
-                    psk0_b64 = vch0_key.get().strip()
-                    if not psk0_b64:
-                        channels[0]["settings"]["psk"] = ""   # effacement explicite
-                    else:
-                        try:
-                            import base64
-                            channels[0]["settings"]["psk"] = base64.b64decode(psk0_b64).hex()
-                        except Exception:
-                            pass  # Base64 invalide → garder la valeur existante
-                    if len(channels) > 1:
-                        if "settings" not in channels[1] or not isinstance(channels[1]["settings"], dict):
-                            channels[1]["settings"] = {}
-                        channels[1]["settings"]["name"] = vch1.get().strip()
-                        # PSK canal 1 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
-                        psk1_b64 = vch1_key.get().strip()
-                        if not psk1_b64:
-                            channels[1]["settings"]["psk"] = ""   # effacement explicite
+                # Reconstruire les 8 canaux avec TASSEMENT (compaction), comme
+                # deleteChannel de Meshtastic : primaire en 0, puis les secondaires
+                # ACTIVÉS (cochés) packés en 1,2,3… SANS TROU, le reste en DISABLED vide.
+                # ⇒ décocher un canal du milieu ne laisse jamais de trou ; nommer une
+                #    ligne l'active (auto-coché) → plus de canal nommé mais désactivé.
+                if not clear_channels_var.get():
+                    import base64 as _b64
+                    old_chs = config.get("channels", [])
+                    if not isinstance(old_chs, list):
+                        old_chs = []
+                    def _row_settings(i):
+                        base = dict(old_chs[i]) if i < len(old_chs) and isinstance(old_chs[i], dict) else {}
+                        settings = dict(base.get("settings", {})) if isinstance(base.get("settings"), dict) else {}
+                        settings["name"] = ch_name_vars[i].get().strip()
+                        _pk = ch_psk_vars[i].get().strip()
+                        if not _pk:
+                            settings["psk"] = ""   # effacement explicite (Bug J)
                         else:
                             try:
-                                import base64
-                                channels[1]["settings"]["psk"] = base64.b64decode(psk1_b64).hex()
+                                settings["psk"] = _b64.b64decode(_pk).hex()   # Base64 → hex
                             except Exception:
                                 pass  # Base64 invalide → garder la valeur existante
-                    if len(channels) > 2:
-                        if "settings" not in channels[2] or not isinstance(channels[2]["settings"], dict):
-                            channels[2]["settings"] = {}
-                        channels[2]["settings"]["name"] = vch2.get().strip()
-                        # PSK canal 2 : Base64 → hex. Champ vidé → effacer la clé (Bug J).
-                        psk2_b64 = vch2_key.get().strip()
-                        if not psk2_b64:
-                            channels[2]["settings"]["psk"] = ""   # effacement explicite
-                        else:
-                            try:
-                                import base64
-                                channels[2]["settings"]["psk"] = base64.b64decode(psk2_b64).hex()
-                            except Exception:
-                                pass  # Base64 invalide → garder la valeur existante
+                        ms = dict(settings.get("module_settings", {})) if isinstance(settings.get("module_settings"), dict) else {}
+                        ms["position_precision"] = _pos_prec_from_label(ch_gps_vars[i].get())
+                        settings["module_settings"] = ms
+                        base["settings"] = settings
+                        return base
+                    new_chs = []
+                    # primaire (ligne 0) → index 0
+                    prim = _row_settings(0); prim["index"] = 0; prim["role"] = 1
+                    new_chs.append(prim)
+                    # secondaires ACTIVÉS (cochés) → packés en 1,2,3… (ordre des lignes)
+                    for i in range(1, 8):
+                        if ch_enabled_vars[i].get():
+                            sec = _row_settings(i); sec["index"] = len(new_chs); sec["role"] = 2
+                            new_chs.append(sec)
+                    # compléter jusqu'à 8 slots en DISABLED vides (pas de trou, pas de résidu)
+                    while len(new_chs) < 8:
+                        idx = len(new_chs)
+                        new_chs.append({"index": idx, "role": 0,
+                                        "settings": {"name": "", "psk": "",
+                                                     "module_settings": {"position_precision": 0}}})
+                    config["channels"] = new_chs
 
                 if clear_channels_var.get():
-                    # Canal 0 (PRIMARY) en dernier : import_full_config l'écrira après
-                    # les canaux 1-7 (role=DISABLED), conformément à l'API Meshtastic.
+                    # L'ordre de cette liste est indifférent : import_full_config trie
+                    # par rôle (primaire d'abord). Le canal 0 reste le PRIMARY :
                     # name="" → l'appareil utilise son nom par défaut ("LongFast")
                     # psk="01" → PSK par défaut Meshtastic (0x01 en hex)
                     config["channels"] = [
                         {"index": i, "role": 0, "settings": {"name": "", "psk": ""}}
                         for i in range(1, 8)
                     ] + [{"index": 0, "role": 1, "settings": {"name": "", "psk": "01"}}]
-
-                if clear_power_var.get():
-                    power = ((config.get("local_config") or {}).get("power"))
-                    if isinstance(power, dict):
-                        keys_to_remove = [k for k in list(power.keys())
-                                          if "multdbm" in k.lower() or "adcmultiplier" in k.lower()]
-                        for k in keys_to_remove:
-                            del power[k]
-                        config["local_config"]["power"] = power
 
                 if clear_known_nodes_var.get():
                     config.pop("known_nodes", None)
@@ -3674,6 +3892,35 @@ class NBFMApp:
         self._edit_popup_refresh = refresh_popup_lang
         refresh_popup_lang()
 
+    def _show_copyable_log(self, title, header, log_text, warn=""):
+        """Popup affichant un journal SÉLECTIONNABLE et COPIABLE.
+
+        Remplace messagebox.showinfo pour les journaux d'import : la boîte standard
+        Tk n'autorise pas le copier-coller. Ici : zone de texte + bouton « Copier »."""
+        T = UI_STRINGS[self.lang_var.get()]
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.geometry("660x480")
+        win.transient(self.root)
+        ttk.Label(win, text=header, font=("Arial", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 2))
+        txt = scrolledtext.ScrolledText(win, font=("Consolas", 9), wrap=tk.WORD)
+        txt.pack(fill="both", expand=True, padx=10, pady=4)
+        txt.insert(tk.END, log_text)
+        if warn:
+            ttk.Label(win, text=warn, foreground="#b26b00", font=("Arial", 9),
+                      wraplength=620, justify="left").pack(anchor="w", padx=10, pady=(0, 4))
+        btns = ttk.Frame(win); btns.pack(fill="x", padx=10, pady=(0, 10))
+        def _copy():
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(log_text)
+                self.set_status(T["log_copied"])
+            except Exception:
+                pass
+        ttk.Button(btns, text=T["log_copy_btn"], command=_copy).pack(side="left")
+        ttk.Button(btns, text=T["popup_close"], command=win.destroy).pack(side="right")
+        win.after(80, lambda: (win.lift(), txt.focus_set()))
+
     def view_file(self):
         f = self._get_selected_file()
         if not f: return
@@ -3681,14 +3928,57 @@ class NBFMApp:
             content = f.read_text(encoding="utf-8")
         except Exception as e:
             messagebox.showerror(UI_STRINGS[self.lang_var.get()]["popup_error_title"], str(e)); return
+        T = UI_STRINGS[self.lang_var.get()]
         win = tk.Toplevel(self.root)
-        win.title(UI_STRINGS[self.lang_var.get()]["popup_view_title"].format(filename=f.name))
+        win.title(T["popup_view_title"].format(filename=f.name))
         win.geometry("850x620")
         win.resizable(True, True)
         bar = ttk.Frame(win); bar.pack(fill="x", padx=8, pady=4)
         ttk.Label(bar, text=f.name, font=("Arial", 10, "bold")).pack(side="left")
-        ttk.Button(bar, text=UI_STRINGS[self.lang_var.get()]["popup_close"], command=win.destroy).pack(side="right")
+        ttk.Button(bar, text=T["popup_close"], command=win.destroy).pack(side="right")
+
         txt = scrolledtext.ScrolledText(win, font=("Courier New", 10), wrap=tk.NONE)
+        edit_var = tk.BooleanVar(value=False)
+
+        def _save():
+            new_content = txt.get("1.0", "end-1c")   # 'end-1c' : sans le \n final du widget
+            # Validation JSON stricte AVANT écriture — ne jamais corrompre un .NBFM
+            try:
+                json.loads(new_content)
+            except Exception as e:
+                messagebox.showerror(T["popup_error_title"], T["view_invalid_json"].format(err=e))
+                return
+            if not messagebox.askyesno(T["view_save_confirm_title"],
+                                       T["view_save_confirm_text"].format(filename=f.name)):
+                return
+            # Sauvegarde horodatée dans Backup/ avant écrasement (best-effort)
+            try:
+                bkdir = get_app_dir() / "Backup"
+                bkdir.mkdir(exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                shutil.copy2(str(f), str(bkdir / f"{f.stem}_{stamp}{f.suffix}"))
+            except Exception:
+                pass
+            try:
+                f.write_text(new_content, encoding="utf-8")
+                self.set_status(T["view_saved"].format(filename=f.name))
+                self.refresh_files()
+            except Exception as e:
+                messagebox.showerror(T["popup_error_title"], str(e))
+
+        save_btn = ttk.Button(bar, text=T["view_save_btn"], command=_save)
+
+        def _toggle_edit():
+            if edit_var.get():
+                txt.config(state="normal")
+                save_btn.pack(side="right", padx=(0, 6))
+            else:
+                txt.config(state="disabled")
+                save_btn.pack_forget()
+
+        ttk.Checkbutton(bar, text=T["view_edit_chk"], variable=edit_var,
+                        command=_toggle_edit).pack(side="right", padx=6)
+
         txt.pack(fill="both", expand=True, padx=8, pady=(0, 4))
         txt.insert(tk.END, content); txt.config(state="disabled")
         hbar = ttk.Scrollbar(win, orient="horizontal", command=txt.xview)
