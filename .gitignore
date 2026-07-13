@@ -20,6 +20,12 @@ NBFM_report_*.html
 # Dossier de versions horodatées du script (local uniquement, non synchronisé)
 Backup/
 
+# Dossiers d'executables
+Executable/
+
+# Dossiers de travails
+/Travails
+
 # Environnements virtuels
 .venv/
 venv/
