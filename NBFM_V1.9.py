@@ -1564,7 +1564,7 @@ UI_STRINGS = {
         "btn_restore_multi":"📥 Restauration multi-nœuds",
         "status_ready":     "Prêt.",
         "help_title": "📖  Guide d'utilisation — Nodes Backup & Fleet Manager",
-        "help_intro": "Cet outil permet d'exporter, sauvegarder et restaurer la configuration de nœuds Meshtastic (T-Echo, ESP32 V3) via USB.",
+        "help_intro": "Cet outil permet d'exporter, sauvegarder et restaurer la configuration de nœuds Meshtastic (T-Echo, Heltec V3/V4…) via USB.",
         "help_sections": [
             ("Prérequis", [
                 ("p","* Python 3.8+ + packages : pip install meshtastic pyserial (sauf si EXE)"),
@@ -1601,7 +1601,7 @@ UI_STRINGS = {
             ("Gestion des fichiers de sauvegarde", [
                 ("p","La liste affiche : type, modèle, rôle, modem, fréquence, canaux, nœuds, date. Triable par clic sur l'en-tête."),
                 ("s",(1,"Actualiser — recharge la liste.")),
-                ("s",(2,"Voir contenu (ou double-clic sur une ligne) — ouvre le NBFM en lecture seule.")),
+                ("s",(2,"Voir contenu (ou double-clic sur une ligne) — ouvre le NBFM. Cochez ✏ Éditer pour le modifier et 💾 Enregistrer (validation JSON stricte, backup horodaté avant écrasement).")),
                 ("s",(3,"Renommer (ou double-clic sur la colonne Fichier) — change le nom du fichier.")),
                 ("s",(4,"Copier — duplique le fichier sélectionné.")),
                 ("s",(5,"Supprimer — supprime définitivement (confirmation demandée).")),
@@ -1630,21 +1630,25 @@ UI_STRINGS = {
                 ("s",(2,"Cliquez sur GÉNÉRER PROFIL FLOTTE.")),
                 ("s",(3,"Choisissez le nom du fichier de profil flotte.")),
                 ("p","SUPPRIMÉ : clé pub/priv, identifiant, owner, nœuds, credentials WiFi, compteurs."),
-                ("p","CONSERVÉ : admin_key, LoRa, canaux PSK (0-2), modules, BT, display, position, power."),
+                ("p","CONSERVÉ : admin_key, LoRa, tous les canaux avec PSK, modules, BT, display, position, power."),
             ]),
             ("Éditeur de champs clés", [
-                ("p","Modifiez les champs essentiels d'un NBFM sans éditeur externe."),
-                ("s",(1,"Sélectionnez un fichier dans la liste.")),
-                ("s",(2,"Cliquez sur Éditer les champs clés.")),
-                ("s",(3,"Section Owner : modifiez le nom long et le nom court.")),
-                ("s",(4,"Section LoRa : choisissez la région et le modem preset dans les listes déroulantes.")),
-                ("s",(5,"Section LoRa : saisissez la fréquence override en MHz (laisser vide = pas d'override).")),
-                ("s",(6,"Section LoRa : cochez Override duty cycle pour ignorer la limite légale de 1% (EU868).")),
-                ("s",(7,"Rôle de l'appareil : choisissez le rôle Meshtastic (CLIENT, ROUTER, REPEATER…).")),
-                ("s",(8,"Section Canaux : modifiez le nom et la clé PSK (Base64) des canaux 0, 1 et 2.")),
-                ("s",(9,"Générateur de clé : choisissez la taille (Défaut / 128 bits / 256 bits), cliquez Générer. Utilisez le bouton 📋 du champ résultat pour copier la clé, puis collez-la dans le champ PSK souhaité.")),
-                ("s",(10,"Nettoyage avancé : cochez les suppressions souhaitées (canaux, ADC, nœuds connus).")),
-                ("s",(11,"Cliquez Sauvegarder — le fichier NBFM est mis à jour directement.")),
+                ("p","Modifiez les champs essentiels d'un NBFM sans éditeur externe. L'éditeur a deux onglets : Principal et Canaux."),
+                ("s",(1,"Sélectionnez un fichier dans la liste, puis cliquez sur Éditer les champs clés.")),
+                ("p","Onglet Principal :"),
+                ("s",(2,"Owner : modifiez le nom long et le nom court.")),
+                ("s",(3,"LoRa : choisissez la région et le modem preset dans les listes déroulantes.")),
+                ("s",(4,"LoRa : saisissez la fréquence override en MHz (laisser vide = pas d'override).")),
+                ("s",(5,"LoRa : cochez Override duty cycle pour ignorer la limite légale de 1% (EU868).")),
+                ("s",(6,"Rôle de l'appareil : choisissez le rôle Meshtastic (CLIENT, ROUTER, REPEATER…).")),
+                ("s",(7,"ADC multiplier : saisissez une valeur ou choisissez un préréglage par appareil. Champ vide = supprime l'override (valeur d'usine).")),
+                ("s",(8,"Nettoyage avancé : cochez les suppressions souhaitées (tous les canaux, nœuds connus).")),
+                ("p","Onglet Canaux (les 8 canaux) :"),
+                ("s",(9,"Case Act. : cochez pour activer un canal. Saisir un nom l'active automatiquement. Le canal 0 est le primaire (verrouillé).")),
+                ("s",(10,"Nom et clé PSK (Base64) de chaque canal, plus la précision GPS partagée (NA = non partagée, 1m = précise).")),
+                ("s",(11,"Générateur de clé : choisissez la taille (Défaut / 128 bits / 256 bits), cliquez Générer. Utilisez le bouton 📋 du champ résultat pour copier la clé, puis collez-la dans le champ PSK souhaité.")),
+                ("s",(12,"Cliquez Sauvegarder — le fichier NBFM est mis à jour directement.")),
+                ("p","À la sauvegarde, les canaux actifs sont tassés (sans trou) et la longueur des clés PSK est vérifiée (doit décoder en 16 ou 32 octets)."),
                 ("p","Les clés PSK doivent être en Base64, format identique à l'application Meshtastic."),
             ]),
             ("Restaurer la configuration", [
@@ -1654,6 +1658,7 @@ UI_STRINGS = {
                 ("s",(3,"Si des avertissements d'intégrité s'affichent, lisez-les avant de confirmer.")),
                 ("s",(4,"Une barre de progression suit l'avancement, écriture par écriture.")),
                 ("s",(5,"Attendez le succès, puis REDÉMARREZ l'appareil pour appliquer.")),
+                ("p","Les canaux sont écrits dans l'ordre officiel (primaire d'abord), relus après coup et relancés automatiquement si l'appareil en a rejeté un en silence."),
                 ("p","ATTENTION : la restauration écrase la config actuelle. Exportez avant si besoin !"),
             ]),
             ("Import multi-nœuds (déploiement en série)", [
@@ -1907,7 +1912,7 @@ UI_STRINGS = {
         "btn_restore_multi":"📥 Multi-node restore",
         "status_ready":     "Ready.",
         "help_title": "📖  User Guide — Nodes Backup & Fleet Manager",
-        "help_intro": "This tool allows you to export, backup and restore the configuration of Meshtastic nodes (T-Echo, ESP32 V3) via USB.",
+        "help_intro": "This tool allows you to export, backup and restore the configuration of Meshtastic nodes (T-Echo, Heltec V3/V4…) via USB.",
         "help_sections": [
             ("Requirements", [
                 ("p","* Python 3.8+ + packages: pip install meshtastic pyserial (not needed for EXE)"),
@@ -1944,7 +1949,7 @@ UI_STRINGS = {
             ("Backup file management", [
                 ("p","The list shows: type, model, role, modem, frequency, channels, nodes, date. Click headers to sort."),
                 ("s",(1,"Refresh — reloads the list.")),
-                ("s",(2,"View content (or double-click a row) — opens the NBFM read-only.")),
+                ("s",(2,"View content (or double-click a row) — opens the NBFM. Tick ✏ Edit to modify it and 💾 Save (strict JSON validation, timestamped backup before overwriting).")),
                 ("s",(3,"Rename (or double-click the File column) — changes the file name.")),
                 ("s",(4,"Copy — duplicates the selected file.")),
                 ("s",(5,"Delete — permanently deletes (confirmation required).")),
@@ -1973,21 +1978,25 @@ UI_STRINGS = {
                 ("s",(2,"Click GENERATE FLEET PROFILE.")),
                 ("s",(3,"Choose a name for the fleet profile file.")),
                 ("p","REMOVED: pub/priv keys, unique ID, owner, nodes, WiFi credentials, counters."),
-                ("p","KEPT: admin_key, LoRa, channels PSK (0-2), modules, BT, display, position, power."),
+                ("p","KEPT: admin_key, LoRa, all channels with PSK, modules, BT, display, position, power."),
             ]),
             ("Key fields editor", [
-                ("p","Edit key fields of a NBFM file without an external editor."),
-                ("s",(1,"Select a file in the list.")),
-                ("s",(2,"Click Edit key fields.")),
-                ("s",(3,"Owner section: edit the long name and short name.")),
-                ("s",(4,"LoRa section: choose region and modem preset from the dropdown lists.")),
-                ("s",(5,"LoRa section: enter override frequency in MHz (leave empty = no override).")),
-                ("s",(6,"LoRa section: tick Override duty cycle to ignore the legal 1% limit (EU868).")),
-                ("s",(7,"Device role: choose the Meshtastic role (CLIENT, ROUTER, REPEATER…).")),
-                ("s",(8,"Channels section: edit the name and PSK key (Base64) for channels 0, 1 and 2.")),
-                ("s",(9,"Key generator: choose size (Default / 128 bits / 256 bits), click Generate. Use the 📋 button on the result field to copy the key, then paste it into the desired PSK field.")),
-                ("s",(10,"Advanced cleanup: check desired deletions (channels, ADC, known nodes).")),
-                ("s",(11,"Click Save — the NBFM file is updated directly.")),
+                ("p","Edit key fields of a NBFM file without an external editor. The editor has two tabs: Main and Channels."),
+                ("s",(1,"Select a file in the list, then click Edit key fields.")),
+                ("p","Main tab:"),
+                ("s",(2,"Owner: edit the long name and short name.")),
+                ("s",(3,"LoRa: choose region and modem preset from the dropdown lists.")),
+                ("s",(4,"LoRa: enter override frequency in MHz (leave empty = no override).")),
+                ("s",(5,"LoRa: tick Override duty cycle to ignore the legal 1% limit (EU868).")),
+                ("s",(6,"Device role: choose the Meshtastic role (CLIENT, ROUTER, REPEATER…).")),
+                ("s",(7,"ADC multiplier: enter a value or pick a per-device preset. Empty field = removes the override (factory value).")),
+                ("s",(8,"Advanced cleanup: check desired deletions (all channels, known nodes).")),
+                ("p","Channels tab (all 8 channels):"),
+                ("s",(9,"Enabled checkbox: tick to enable a channel. Typing a name enables it automatically. Channel 0 is the primary (locked).")),
+                ("s",(10,"Name and PSK key (Base64) for each channel, plus the shared GPS precision (NA = not shared, 1m = precise).")),
+                ("s",(11,"Key generator: choose size (Default / 128 bits / 256 bits), click Generate. Use the 📋 button on the result field to copy the key, then paste it into the desired PSK field.")),
+                ("s",(12,"Click Save — the NBFM file is updated directly.")),
+                ("p","On save, active channels are compacted (no gaps) and PSK key length is validated (must decode to 16 or 32 bytes)."),
                 ("p","PSK keys must be in Base64 format, identical to the Meshtastic app."),
             ]),
             ("Restore configuration", [
@@ -1997,6 +2006,7 @@ UI_STRINGS = {
                 ("s",(3,"If integrity warnings appear, read them before confirming.")),
                 ("s",(4,"A progress bar follows the restore, write by write.")),
                 ("s",(5,"Wait for success, then RESTART the device to apply.")),
+                ("p","Channels are written in the official order (primary first), re-read afterwards and automatically retried if the device silently rejected one."),
                 ("p","WARNING: restoring overwrites the current config. Export first if needed!"),
             ]),
             ("Multi-node import (batch deployment)", [
@@ -2199,7 +2209,7 @@ def tr(key: str, **kwargs) -> str:
 class NBFMApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nodes Backup & Fleet Manager v1.8")
+        self.root.title("Nodes Backup & Fleet Manager v1.9")
         # Taille Fenetre principale
         self.root.geometry("1220x840")
         self.root.resizable(True, True)

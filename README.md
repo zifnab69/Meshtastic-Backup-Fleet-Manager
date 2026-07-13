@@ -20,8 +20,12 @@ A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic 
 - **Fleet profile generation** — strips device-unique data (private/public keys, owner, WiFi credentials) and keeps the shared config (admin_key, LoRa, channels, modules…) for multi-node deployment
 - **Sequential multi-node export** — export multiple nodes one after another in the same session
 - **Sequential multi-node import** — deploy the same JSON file to multiple nodes in one session
-- **Key fields editor** — edit region, modem preset, owner name and channel names directly in the UI without touching the JSON
+- **Two-tab key fields editor** — edit owner, LoRa region, modem preset, override frequency, override duty cycle and device role in the "Main" tab; edit all 8 channels (enable/role, name, Base64 PSK, GPS precision, key generator) in the "Channels" tab — no need to touch the JSON
+- **Restore progress bar** — step-by-step progress window (owner, sections, modules, channels, final commit) for single- and multi-node restores
+- **Robust channel injection** — canonical restore order with post-commit verification and automatic retry of channels silently rejected by the device
 - **Integrity validation** — automatic pre-restore checks with warnings
+- **Editable raw-JSON viewer** and **copyable import logs**
+- **Persistent settings** — language and last working directory saved in `NBFM_Config.json`
 - **Standalone EXE** — compiled with PyInstaller, no Python installation required
 - **ENG and FR** — UI in English or French.
 
@@ -45,7 +49,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python NBFMV1.75.py
+python NBFM_V1.9.py
 ```
 
 ### Running the standalone EXE
@@ -67,9 +71,9 @@ No installation needed. Download the EXE from the [Releases](../../releases) pag
 
 ## Fleet deployment workflow
 
-1. Export a reference node to JSON
+1. Export a reference node to NBFM
 2. Click **GENERATE FLEET PROFILE** — this removes unique keys and owner info
-3. Select the generated `*_fleet.json` file
+3. Select the generated `*_fleet.NBFM` file
 4. Click **Multi-node import** and restore to each node in sequence
 
 ---
@@ -91,10 +95,10 @@ No installation needed. Download the EXE from the [Releases](../../releases) pag
 ## File naming
 
 ```
-Meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].json
+meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].NBFM
 ```
 
-Example: `Meshtastic_JMC_5F7B_20260509_095500.json`
+Example: `meshtastic_JMC_5F7B_20260509_095500.NBFM`
 
 The short_name includes the last 4 hex characters of the node's MAC address for unique identification.
 
@@ -102,10 +106,13 @@ The short_name includes the last 4 hex characters of the node's MAC address for 
 
 ## Channel restore order
 
-Channels are restored in this specific order to prevent the firmware from resetting the primary channel:
+Channels are restored in the canonical order used by the official Meshtastic CLI (`setURL`):
 
-1. Secondary channels (role = 2) first
-2. Primary channel (role = 1) last
+1. Primary channel (role = 1) first (index 0)
+2. Secondary channels (role = 2) next
+3. Disabled channels (role = 0) last
+
+After the commit, NBFM re-reads the channels and automatically retries any active channel silently rejected by the device.
 
 ---
 ## Disclamer
@@ -144,10 +151,14 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 - **Génération de profils flotte** — supprime les données uniques (clés privées/publiques, owner, WiFi) et conserve la config partagée (admin_key, LoRa, canaux, modules…) pour déploiement multi-nœuds
 - **Export multi-nœuds séquentiel** — exporter plusieurs nœuds l'un après l'autre dans la même session
 - **Import multi-nœuds séquentiel** — déployer le même fichier JSON sur plusieurs nœuds en une session
-- **Éditeur de champs clés** — modifier région, modem preset, nom owner et noms des canaux directement dans l'interface
+- **Éditeur de champs clés en deux onglets** — onglet « Principal » (owner, région LoRa, modem preset, fréquence override, override duty cycle, rôle) ; onglet « Canaux » (les 8 canaux : activation/rôle, nom, PSK Base64, précision GPS, générateur de clés) — sans toucher au JSON
+- **Barre de progression de la restauration** — fenêtre étape par étape (owner, sections, modules, canaux, commit final), en mono et multi-nœuds
+- **Injection canaux robuste** — ordre de restauration canonique, vérification post-commit et relance automatique des canaux silencieusement rejetés par l'appareil
 - **Validation d'intégrité** — vérifications automatiques avant chaque restauration
+- **Visualiseur JSON éditable** et **journaux d'import copiables**
+- **Réglages persistants** — langue et dernier dossier de travail conservés dans `NBFM_Config.json`
 - **EXE autonome** — compilé avec PyInstaller, aucune installation Python requise
-- **ENG ou FR** — Ui en anglais ou en français à la demande
+- **ENG ou FR** — UI en anglais ou en français à la demande
 
 ---
 
@@ -171,7 +182,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python python NBFMV1.75.py
+python NBFM_V1.9.py
 ```
 
 ### Depuis l'EXE autonome
@@ -193,9 +204,9 @@ Aucune installation requise. Télécharger l'EXE depuis la page [Releases](../..
 
 ## Déploiement en flotte
 
-1. Exporter un nœud de référence en JSON
+1. Exporter un nœud de référence en NBFM
 2. Cliquer **GÉNÉRER PROFIL FLOTTE** — les clés uniques et les infos owner sont supprimées
-3. Sélectionner le fichier `*_fleet.json` généré
+3. Sélectionner le fichier `*_fleet.NBFM` généré
 4. Cliquer **Import multi-nœuds** et restaurer sur chaque nœud à la suite
 
 ---
@@ -217,17 +228,22 @@ Aucune installation requise. Télécharger l'EXE depuis la page [Releases](../..
 ## Nommage automatique des fichiers
 
 ```
-meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].json
+meshtastic_[short_name]_[YYYYMMDD]_[HHMMSS].NBFM
 ```
 
-Exemple : `meshtastic_JMC_5F7B_20260509_095500.json`
+Exemple : `meshtastic_JMC_5F7B_20260509_095500.NBFM`
 
 ---
 
 ## Ordre de restauration des canaux
 
-1. Canaux secondaires (role = 2) en premier
-2. Canal primaire (role = 1) en dernier
+Ordre canonique du CLI Meshtastic officiel (`setURL`) :
+
+1. Canal primaire (role = 1) en premier (index 0)
+2. Canaux secondaires (role = 2) ensuite
+3. Canaux désactivés (role = 0) en dernier
+
+Après le commit, NBFM relit les canaux et relance automatiquement tout canal actif silencieusement rejeté par l'appareil.
 
 ---
 

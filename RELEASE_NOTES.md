@@ -1,26 +1,44 @@
 # Nodes Backup & Fleet Manager — Notes de version / Release notes
 
-> Texte de version prêt à coller dans une **GitHub Release**.
+> Texte de version prêt à coller dans une **GitHub Release** — tag **V1.9**.
 > Il décrit les **fonctions utiles à connaître** qui ne sont **pas encore détaillées**
-> sur la page des releases (https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/releases),
-> où seules les V1.75 → V1.78 sont documentées (colonnes de la liste, tooltips, notes,
-> rapport HTML, renommage, menu contextuel, colonne/éditeur de rôle).
+> sur la page des releases (https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/releases).
 >
-> Numéro de version applicatif des fichiers exportés : **2.6** — ajustez le tag GitHub
-> (ex. `V1.79`) selon votre numérotation.
+> Numéro de version applicatif des fichiers exportés : **2.6** (schéma d'export interne).
 
 ---
 
 ## 🇫🇷 Français
 
-### ✨ Nouveautés de cette version
+### ✨ Nouveautés V1.9
 
-- **Barre de progression de la restauration.** La restauration affiche désormais une fenêtre
-  de progression (étape par étape : propriétaire, sections, modules, canaux, validation finale),
-  en mono-nœud comme en multi-nœuds. Plus d'attente « aveugle » de 15-20 s.
+- **Éditeur de champs clés en deux onglets** (« Principal » + « Canaux »). L'onglet Principal
+  regroupe owner, LoRa, override duty cycle, rôle et multiplicateur ADC ; l'onglet Canaux gère
+  les **8 canaux**.
+- **Les 8 canaux éditables**, chacun avec une case **« Activé »** qui définit le rôle
+  (le canal 0 reste primaire, verrouillé). Saisir un nom **auto-active** le canal, et les canaux
+  actifs sont **tassés sans trou** à la sauvegarde. Correction du bug où un canal nommé restait
+  désactivé (role=0).
+- **Précision GPS par canal** (position_precision : NA / 23 km / … / 1 m) et **multiplicateur ADC**
+  avec presets par appareil.
+- **Injection des canaux fiabilisée** : ordre canonique (primaire d'abord, aligné sur `setURL`),
+  **vérification post-commit** (relecture des canaux) et **relance automatique** des canaux
+  silencieusement rejetés par l'appareil (nœuds non vierges / clé PKI). Testé sur Heltec V4 /
+  firmware 2.7.x.
+- **Validation de la longueur des PSK** dans l'éditeur (1/16/32 octets) — bloque une clé invalide
+  avant qu'elle ne soit rejetée en silence par le firmware.
+- **Visualiseur JSON éditable** : case « ✏ Éditer » + bouton « 💾 Enregistrer » (validation JSON
+  stricte, copie horodatée dans `Backup/` avant écrasement).
+- **Journaux d'import copiables** (copier/coller du détail de restauration).
+
+### 🧩 Rappel des nouveautés récentes (V1.8)
+
+- **Barre de progression de la restauration.** Fenêtre de progression étape par étape
+  (propriétaire, sections, modules, canaux, validation finale), en mono comme en multi-nœuds.
 - **Restauration fiable des clés de chiffrement des canaux (PSK).** Les clés exportées en Base64
-  sont de nouveau restaurées correctement. Auparavant, restaurer une sauvegarde standard pouvait
-  vider les PSK de certains canaux (les noms revenaient, pas les clés). Corrigé.
+  sont restaurées correctement (hex ET Base64 acceptés). Auparavant, restaurer une sauvegarde
+  standard pouvait vider les PSK de certains canaux (les noms revenaient, pas les clés). Corrigé.
+- **Persistance de la langue et du dossier de travail** (`NBFM_Config.json`).
 
 ### 🔑 Fonctions à connaître (déjà présentes mais non listées sur la page des releases)
 
@@ -60,13 +78,32 @@
 
 ## 🇬🇧 English
 
-### ✨ What's new in this version
+### ✨ What's new in V1.9
 
-- **Restore progress bar.** Restoring now shows a progress window (step by step: owner, sections,
-  modules, channels, final commit), for single-node and multi-node restores. No more blind 15-20 s wait.
+- **Two-tab key fields editor** ("Main" + "Channels"). The Main tab groups owner, LoRa, override
+  duty cycle, role and ADC multiplier; the Channels tab manages all **8 channels**.
+- **All 8 channels editable**, each with an **"Enabled"** checkbox that sets the role (channel 0
+  stays primary, locked). Typing a name **auto-enables** the channel, and active channels are
+  **compacted without gaps** on save. Fixes the bug where a named channel stayed disabled (role=0).
+- **Per-channel GPS precision** (position_precision: NA / 23 km / … / 1 m) and **ADC multiplier**
+  with per-device presets.
+- **Hardened channel injection**: canonical order (primary first, aligned with `setURL`),
+  **post-commit verification** (channel re-read) and **automatic retry** of channels silently
+  rejected by the device (non-blank nodes / PKI key). Tested on Heltec V4 / firmware 2.7.x.
+- **PSK length validation** in the editor (1/16/32 bytes) — blocks an invalid key before the
+  firmware silently rejects it.
+- **Editable raw-JSON viewer**: "✏ Edit" checkbox + "💾 Save" button (strict JSON validation,
+  timestamped copy in `Backup/` before overwriting).
+- **Copyable import logs** (copy/paste the restore details).
+
+### 🧩 Recent additions recap (V1.8)
+
+- **Restore progress bar.** Step-by-step progress window (owner, sections, modules, channels, final
+  commit), for single-node and multi-node restores.
 - **Reliable channel encryption key (PSK) restore.** Keys exported in Base64 are restored correctly
-  again. Previously, restoring a standard backup could wipe some channels' PSKs (names came back, keys
-  did not). Fixed.
+  (both hex and Base64 accepted). Previously, restoring a standard backup could wipe some channels'
+  PSKs (names came back, keys did not). Fixed.
+- **Language and working-directory persistence** (`NBFM_Config.json`).
 
 ### 🔑 Functions worth knowing (already present but not listed on the releases page)
 
