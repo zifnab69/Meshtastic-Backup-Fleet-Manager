@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Nodes Backup & Fleet Manager v1.8
-Version interne NBFM_20260531_0001
+Nodes Backup & Fleet Manager v1.9
+Version interne NBFM_20260713_1006
 Export/Import COMPLET + Profil Flotte (généralisation)
 # ============================================================
 # Nom du script : NODES-BACKUP-FLEET-MANAGER.py
@@ -2232,7 +2232,7 @@ class NBFMApp:
         # ── En-tête global ────────────────────────────────────────────────────
         hdr = ttk.Frame(root)
         hdr.pack(fill="x", pady=(12, 2), padx=20)
-        ttk.Label(hdr, text="Nodes Backup & Fleet Manager v1.8",
+        ttk.Label(hdr, text="Nodes Backup & Fleet Manager v1.9",
                   font=("Arial", 15, "bold")).pack(side="left")
         # Sélecteur de langue FR / EN
         lang_frame = ttk.Frame(hdr)
@@ -2537,7 +2537,7 @@ class NBFMApp:
                     step(val[0], val[1])
 
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(10, 4))
-        ttk.Label(inner, text="Nodes Backup & Fleet Manager v1.8",
+        ttk.Label(inner, text="Nodes Backup & Fleet Manager v1.9",
                   font=("Arial", 8), foreground="#aaa").pack(anchor="e", padx=8, pady=4)
 
 
