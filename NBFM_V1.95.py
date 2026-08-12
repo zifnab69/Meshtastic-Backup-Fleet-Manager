@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Nodes Backup & Fleet Manager v1.9
-Version interne NBFM_20260713_1006
+Nodes Backup & Fleet Manager v1.95
+Version interne NBFM_20260812_1321
 Export/Import COMPLET + Profil Flotte (généralisation)
 # ============================================================
 # Nom du script : NODES-BACKUP-FLEET-MANAGER.py
@@ -2209,10 +2209,11 @@ def tr(key: str, **kwargs) -> str:
 class NBFMApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nodes Backup & Fleet Manager v1.9")
-        # Taille Fenetre principale
-        self.root.geometry("1220x840")
+        self.root.title("Nodes Backup & Fleet Manager v1.95")
+        # Taille Fenetre principale — bornée à l'écran (petits écrans / 768 px de haut)
+        self._fit_to_screen(self.root, 1220, 840)
         self.root.resizable(True, True)
+        self.root.minsize(760, 300)
         self.work_dir = load_work_dir()   # Bug B : dossier de travail persisté (APP_DIR par défaut)
         self._notes: dict = {}
         self._file_meta_cache: dict = {}   # iid → meta dict
@@ -2225,6 +2226,82 @@ class NBFMApp:
         self.refresh_files()
         self.root.after(200, self.detect_ports)
         self._edit_popup_refresh = None
+
+    # ── Adaptation aux petits écrans ──────────────────────────────────────────
+
+    @staticmethod
+    def _fit_to_screen(win, want_w: int, want_h: int, margin_h: int = 90):
+        """Applique une géométrie bornée à la taille de l'écran.
+
+        Sur un écran 1366x768, une fenêtre de 840 px de haut déborde sous la barre
+        des tâches : les derniers blocs deviennent inaccessibles. On réduit donc la
+        taille demandée sans jamais l'augmenter."""
+        try:
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            w = min(want_w, max(640, sw - 40))
+            h = min(want_h, max(400, sh - margin_h))
+            win.geometry(f"{w}x{h}")
+        except Exception:
+            win.geometry(f"{want_w}x{want_h}")
+
+    def _bind_mousewheel_global(self):
+        """Un seul binding molette pour toute l'application.
+
+        Le handler remonte la hiérarchie depuis le widget survolé : si celui-ci
+        défile déjà tout seul (Treeview, Text, Listbox) on ne fait rien, sinon on
+        défile le premier conteneur scrollable rencontré (marqué `_nbfm_scroll`)."""
+        def _wheel(e):
+            w = e.widget
+            while isinstance(w, tk.Misc):
+                if isinstance(w, (ttk.Treeview, tk.Text, tk.Listbox)):
+                    return
+                if isinstance(w, tk.Canvas) and getattr(w, "_nbfm_scroll", False):
+                    try:
+                        w.yview_scroll(int(-1 * (e.delta / 120)), "units")
+                    except Exception:
+                        pass
+                    return
+                w = w.master
+        self.root.bind_all("<MouseWheel>", _wheel)
+
+    def _make_scrollable(self, parent):
+        """Crée un conteneur à ascenseur vertical. Renvoie (outer, inner).
+
+        `outer` est à packer/grid dans `parent` ; le contenu va dans `inner`.
+        L'ascenseur n'apparaît QUE si le contenu ne tient pas : tant qu'il y a la
+        place, `inner` est étiré à la hauteur du canvas, ce qui préserve le
+        comportement d'origine (les blocs en `expand=True` s'étirent)."""
+        outer = ttk.Frame(parent)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        canvas._nbfm_scroll = True
+        vbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = ttk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync(_e=None):
+            try:
+                req = inner.winfo_reqheight()
+                ch = max(canvas.winfo_height(), 1)
+                cw = max(canvas.winfo_width(), 1)
+                canvas.itemconfig(win_id, width=cw, height=max(req, ch))
+                canvas.configure(scrollregion=(0, 0, cw, max(req, ch)))
+                if req > ch:
+                    if not vbar.winfo_ismapped():
+                        vbar.pack(side="right", fill="y")
+                else:
+                    if vbar.winfo_ismapped():
+                        vbar.pack_forget()
+                    canvas.yview_moveto(0)
+            except Exception:
+                pass
+
+        inner.bind("<Configure>", _sync)
+        canvas.bind("<Configure>", _sync)
+        return outer, inner
+
     def _build_ui(self):
         root = self.root
         T = UI_STRINGS[self.lang_var.get()]
@@ -2232,7 +2309,7 @@ class NBFMApp:
         # ── En-tête global ────────────────────────────────────────────────────
         hdr = ttk.Frame(root)
         hdr.pack(fill="x", pady=(12, 2), padx=20)
-        ttk.Label(hdr, text="Nodes Backup & Fleet Manager v1.9",
+        ttk.Label(hdr, text="Nodes Backup & Fleet Manager v1.95",
                   font=("Arial", 15, "bold")).pack(side="left")
         # Sélecteur de langue FR / EN
         lang_frame = ttk.Frame(hdr)
@@ -2260,7 +2337,12 @@ class NBFMApp:
         self.notebook.add(self._aide_tab, text=T["tab_help"])
         self._build_aide_tab(self._aide_tab, T)
 
-        root = self._main_tab
+        # Onglet principal : tout le contenu vit dans un conteneur à ascenseur
+        # global, pour rester accessible même sur un écran de faible hauteur
+        # (sans ça, les blocs packés en dernier — « Restaurer » — disparaissent).
+        self._main_scroll_outer, self._main_scroll_inner = self._make_scrollable(self._main_tab)
+        self._main_scroll_outer.pack(fill="both", expand=True)
+        root = self._main_scroll_inner
 
         # Dossier
         self._lf_folder = ttk.LabelFrame(root, text=T["lf_folder"], padding=8)
@@ -2421,11 +2503,16 @@ class NBFMApp:
                   relief="raised", font=("Arial", 9, "bold"))
         self._btn_restore_multi.pack(side="left", fill="x", expand=True, ipady=6)
 
-        # Status bar
+        # Status bar — hors zone défilante et servie EN PREMIER par pack
+        # (`before=`), pour rester visible quelle que soit la hauteur de fenêtre.
         self.status_var = tk.StringVar(value=T["status_ready"])
-        self._status_bar = ttk.Label(root, textvariable=self.status_var, relief="sunken",
+        self._status_bar = ttk.Label(self._main_tab, textvariable=self.status_var, relief="sunken",
                   font=("Arial", 9), foreground="#003366", anchor="w")
-        self._status_bar.pack(fill="x", side="bottom", ipady=3)
+        self._status_bar.pack(fill="x", side="bottom", ipady=3,
+                              before=self._main_scroll_outer)
+
+        # Molette : un unique binding global (voir _bind_mousewheel_global)
+        self._bind_mousewheel_global()
 
     # ── Langue ────────────────────────────────────────────────────────────────
 
@@ -2494,6 +2581,7 @@ class NBFMApp:
         if T is None:
             T = UI_STRINGS[self.lang_var.get()]
         canvas = tk.Canvas(parent, highlightthickness=0)
+        canvas._nbfm_scroll = True      # cible du binding molette global
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
@@ -2507,8 +2595,8 @@ class NBFMApp:
             canvas.itemconfig(window_id, width=event.width)
         inner.bind("<Configure>", on_frame_configure)
         canvas.bind("<Configure>", on_canvas_resize)
-        canvas.bind_all("<MouseWheel>",
-            lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        # (molette gérée par le binding global : l'ancien bind_all local défilait
+        #  aussi cet onglet quand on scrollait ailleurs dans l'application)
 
         def section(title):
             ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(10, 4))
@@ -2537,7 +2625,7 @@ class NBFMApp:
                     step(val[0], val[1])
 
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(10, 4))
-        ttk.Label(inner, text="Nodes Backup & Fleet Manager v1.9",
+        ttk.Label(inner, text="Nodes Backup & Fleet Manager v1.95",
                   font=("Arial", 8), foreground="#aaa").pack(anchor="e", padx=8, pady=4)
 
 
@@ -3440,20 +3528,37 @@ class NBFMApp:
             
 # Panneau « Éditer les champs clés » — 2 onglets (Principal / Canaux)
         win = tk.Toplevel(self.root)
-        win.geometry("680x760")
+        self._fit_to_screen(win, 680, 760)
         win.resizable(True, True)
+        win.minsize(560, 260)
         win.grab_set()
 
         header_lbl = ttk.Label(win, font=("Arial", 9, "bold"))
         header_lbl.pack(anchor="w", padx=12, pady=(10, 2))
         ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=4)
 
+        # Bas de fenêtre créé AVANT le notebook : pack sert les widgets dans
+        # l'ordre de déclaration, donc les boutons Enregistrer/Annuler restent
+        # visibles même si la fenêtre est plus basse que son contenu.
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill="x", side="bottom", padx=12, pady=(0, 12))
+        frm_cleanup = ttk.LabelFrame(win, padding=8)
+        frm_cleanup.pack(fill="x", side="bottom", padx=12, pady=(0, 8))
+        ttk.Separator(win, orient="horizontal").pack(fill="x", side="bottom", padx=10, pady=6)
+
         nb = ttk.Notebook(win)
         nb.pack(fill="both", expand=True, padx=8, pady=(0, 4))
-        tab_main = ttk.Frame(nb, padding=10)
-        tab_chan = ttk.Frame(nb, padding=10)
-        nb.add(tab_main, text="")
-        nb.add(tab_chan, text="")
+        # Chaque onglet est défilable : formulaire complet accessible sur petit écran
+        page_main = ttk.Frame(nb)
+        page_chan = ttk.Frame(nb)
+        nb.add(page_main, text="")
+        nb.add(page_chan, text="")
+        _outer_main, tab_main = self._make_scrollable(page_main)
+        _outer_main.pack(fill="both", expand=True)
+        _outer_chan, tab_chan = self._make_scrollable(page_chan)
+        _outer_chan.pack(fill="both", expand=True)
+        tab_main.configure(padding=10)
+        tab_chan.configure(padding=10)
         frm = tab_main                     # l'onglet Principal réutilise la grille existante
         frm.columnconfigure(1, weight=1)
         frm.columnconfigure(2, weight=0)
@@ -3681,11 +3786,7 @@ class NBFMApp:
             gen_result_entry.selection_range(0, "end")
         btn_gen.config(command=_do_generate)
 
-        ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=6)
-
-        frm_cleanup = ttk.LabelFrame(win, padding=8)
-        frm_cleanup.pack(fill="x", padx=12, pady=(0, 8))
-
+        # (séparateur + cadre « Nettoyage » créés plus haut, packés côté bas)
         clear_channels_var = tk.BooleanVar(value=False)
         chk_channels = ttk.Checkbutton(frm_cleanup, variable=clear_channels_var)
         chk_channels.pack(anchor="w", padx=4, pady=2)
@@ -3700,8 +3801,8 @@ class NBFMApp:
             t = TT()
             win.title(t["edit_title"].format(filename=f.name))
             header_lbl.config(text=t["edit_file"].format(filename=f.name))
-            nb.tab(tab_main, text=t["edit_tab_main"])
-            nb.tab(tab_chan, text=t["edit_tab_channels"])
+            nb.tab(page_main, text=t["edit_tab_main"])
+            nb.tab(page_chan, text=t["edit_tab_channels"])
             frm_cleanup.config(text=t["edit_cleanup"])
 
             for widget, key in popup_labels:
@@ -3711,9 +3812,7 @@ class NBFMApp:
             for widget, key in popup_buttons:
                 widget.config(text=t[key])
 
-        btn_row = ttk.Frame(win)
-        btn_row.pack(fill="x", padx=12, pady=(0, 12))
-
+        # (btn_row créé plus haut, packé côté bas)
         def save_and_close(save_as=False):
             try:
                 owner = config.get("owner", {}) or {}

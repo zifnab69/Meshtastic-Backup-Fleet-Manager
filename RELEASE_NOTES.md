@@ -1,6 +1,6 @@
 # Nodes Backup & Fleet Manager — Notes de version / Release notes
 
-> Texte de version prêt à coller dans une **GitHub Release** — tag **V1.9**.
+> Texte de version prêt à coller dans une **GitHub Release** — tag **V1.95**.
 > Il décrit les **fonctions utiles à connaître** qui ne sont **pas encore détaillées**
 > sur la page des releases (https://github.com/zifnab69/Nodes-Backup-Fleet-Manager/releases).
 >
@@ -10,7 +10,20 @@
 
 ## 🇫🇷 Français
 
-### ✨ Nouveautés V1.9
+### ✨ Nouveautés V1.95
+
+- **Compatible petits écrans.** L'onglet principal dispose d'un **ascenseur global** : le bloc
+  « Restaurer la configuration » et la barre d'état restent accessibles quelle que soit la hauteur
+  de la fenêtre (avant, ils étaient tronqués en bas d'écran). L'ascenseur ne s'affiche que si le
+  contenu ne tient pas ; en plein écran, l'affichage est identique aux versions précédentes.
+- **Taille de fenêtre adaptée à l'écran.** La fenêtre principale et l'éditeur de champs clés
+  s'ouvrent bornés à la hauteur disponible (utile sur les portables 1366×768).
+- **Éditeur de champs clés utilisable en fenêtre réduite** : onglets « Principal » et « Canaux »
+  défilables, boutons **Enregistrer / Enregistrer sous / Annuler** toujours visibles.
+- **Molette souris plus prévisible** : elle agit sur la zone réellement survolée (liste de fichiers,
+  aide, formulaires) au lieu de faire défiler l'onglet Aide en arrière-plan.
+
+### 🧩 Rappel des nouveautés V1.9
 
 - **Éditeur de champs clés en deux onglets** (« Principal » + « Canaux »). L'onglet Principal
   regroupe owner, LoRa, override duty cycle, rôle et multiplicateur ADC ; l'onglet Canaux gère
@@ -78,7 +91,20 @@
 
 ## 🇬🇧 English
 
-### ✨ What's new in V1.9
+### ✨ What's new in V1.95
+
+- **Small-screen friendly.** The main tab now has a **global scrollbar**: the "Restore configuration"
+  block and the status bar stay reachable whatever the window height (they used to be cut off at the
+  bottom). The scrollbar only appears when the content does not fit; on a full-size window the layout
+  is identical to previous versions.
+- **Window size fitted to the screen.** The main window and the key-fields editor open bounded to the
+  available height (handy on 1366×768 laptops).
+- **Key-fields editor usable in a small window**: scrollable "Main" and "Channels" tabs, with
+  **Save / Save as / Cancel** buttons always visible.
+- **More predictable mouse wheel**: it scrolls the area actually under the cursor (file list, help,
+  forms) instead of scrolling the Help tab in the background.
+
+### 🧩 Recap of V1.9
 
 - **Two-tab key fields editor** ("Main" + "Channels"). The Main tab groups owner, LoRa, override
   duty cycle, role and ADC multiplier; the Channels tab manages all **8 channels**.

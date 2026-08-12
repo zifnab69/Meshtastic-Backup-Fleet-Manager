@@ -26,6 +26,7 @@ A Python/Tkinter desktop application to **backup, restore and deploy Meshtastic 
 - **Integrity validation** — automatic pre-restore checks with warnings
 - **Editable raw-JSON viewer** and **copyable import logs**
 - **Persistent settings** — language and last working directory saved in `NBFM_Config.json`
+- **Small-screen friendly** — global scrollbar on the main tab and scrollable editor tabs: every block stays reachable whatever the window height
 - **Standalone EXE** — compiled with PyInstaller, no Python installation required
 - **ENG and FR** — UI in English or French.
 
@@ -49,7 +50,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python NBFM_V1.9.py
+python NBFM_V1.95.py
 ```
 
 ### Running the standalone EXE
@@ -157,6 +158,7 @@ Application Python/Tkinter pour **sauvegarder, restaurer et déployer les config
 - **Validation d'intégrité** — vérifications automatiques avant chaque restauration
 - **Visualiseur JSON éditable** et **journaux d'import copiables**
 - **Réglages persistants** — langue et dernier dossier de travail conservés dans `NBFM_Config.json`
+- **Compatible petits écrans** — ascenseur global sur l'onglet principal et onglets d'édition défilables : tous les blocs restent accessibles quelle que soit la hauteur de la fenêtre
 - **EXE autonome** — compilé avec PyInstaller, aucune installation Python requise
 - **ENG ou FR** — UI en anglais ou en français à la demande
 
@@ -182,7 +184,7 @@ protobuf
 
 ```bash
 pip install meshtastic pyserial protobuf
-python NBFM_V1.9.py
+python NBFM_V1.95.py
 ```
 
 ### Depuis l'EXE autonome
